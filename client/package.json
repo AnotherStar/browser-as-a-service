@@ -1,0 +1,23 @@
+{
+  "name": "nodriver-scrape-client",
+  "version": "0.1.0",
+  "description": "Typesafe (zod) client for the nodriver scraping service, generated from OpenAPI.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "generate": "openapi-zod-client ./openapi.json -o ./src/generated.ts --export-schemas && node patch-generated.mjs",
+    "build": "tsc -p tsconfig.json",
+    "example:price": "tsx examples/price.ts"
+  },
+  "dependencies": {
+    "@zodios/core": "^10.9.6",
+    "axios": "^1.7.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "openapi-zod-client": "^1.18.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

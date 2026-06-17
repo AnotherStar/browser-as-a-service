@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.env
+.env.*
+!.env.example
+client/dist/
+*.png
+*.jpg
+/tmp/
+.DS_Store
