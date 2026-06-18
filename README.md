@@ -191,6 +191,46 @@ discriminated union по полю `action`. Добавить новую кома
 | `ASOCKS_TIMEOUT_S` | `30` | таймаут HTTP-вызова к API Asocks |
 | `ASOCKS_TYPE_ID` / `ASOCKS_PROXY_TYPE_ID` / `ASOCKS_SERVER_PORT_TYPE_ID` | `1` / `2` / `1` | поля `create-port` (по умолчанию — SOCKS5-порт с авторизацией) |
 
+## Деплой (сервер)
+
+Сервис крутится под **systemd** с виртуальным дисплеем (`xvfb-run`, нужен для
+headful Chrome) за nginx. Юнит `/etc/systemd/system/browser-as-a-service.service`:
+
+```ini
+[Unit]
+Description=browser-as-a-service (FastAPI + zendriver/Chrome over Xvfb)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/browser-as-a-service/service
+EnvironmentFile=-/var/www/browser-as-a-service/.env
+ExecStart=/usr/bin/xvfb-run -a /var/www/browser-as-a-service/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8077
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Первичная установка (один раз):
+```bash
+systemctl daemon-reload && systemctl enable --now browser-as-a-service
+```
+
+Обновление кода — скриптом [`deploy.sh`](./deploy.sh) (git pull → pip → рестарт → health-check):
+```bash
+ssh ai-seller 'cd /var/www/browser-as-a-service && ./deploy.sh'
+```
+
+- Секреты (`ASOCKS_API_KEY`) — в `/var/www/browser-as-a-service/.env` (вне git).
+- Логи: `journalctl -u browser-as-a-service -f`.
+- Статус/рестарт: `systemctl status|restart browser-as-a-service`.
+
 ## Замечания по zendriver
 
 - Используется `zendriver` (PyPI), а не оригинальный `nodriver`: версия
