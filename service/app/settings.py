@@ -81,9 +81,9 @@ class Settings:
     # polls it, so this caps how often the Asocks API is hit for it.
     asocks_balance_ttl_s: float = float(os.environ.get("ASOCKS_BALANCE_TTL_S", "60"))
     # create-port required fields (a missing one is a 422). Defaults mirror
-    # Asocks' official PHP example; proxy_type_id=2 yields a SOCKS5 port with
-    # user/pass auth, which Chrome reaches through the local bridge (see
-    # socks_bridge.py). Exposed as env in case a plan needs different ids.
+    # Asocks' official PHP example. The gateway speaks HTTP and SOCKS5 on the
+    # same port; we use it as an HTTP proxy so Chrome can authenticate natively.
+    # Exposed as env in case a plan needs different ids.
     asocks_type_id: int = int(os.environ.get("ASOCKS_TYPE_ID", "1"))
     asocks_proxy_type_id: int = int(os.environ.get("ASOCKS_PROXY_TYPE_ID", "2"))
     asocks_server_port_type_id: int = int(

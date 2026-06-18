@@ -16,7 +16,6 @@ from fastapi import FastAPI, HTTPException, Request
 from .admin import router as admin_router
 from .asocks import client as asocks_client
 from .browser import apply_cookies, manager
-from .socks_bridge import manager as bridge_manager
 from .engine import run_steps
 from .events import bus
 from .models import (
@@ -41,7 +40,6 @@ async def lifespan(app: FastAPI):
     yield
     bus.emit("warn", "system", "system", "service stopping", "")
     await manager.shutdown()
-    await bridge_manager.shutdown()
 
 
 app = FastAPI(

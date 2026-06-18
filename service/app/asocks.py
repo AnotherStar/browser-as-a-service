@@ -32,7 +32,6 @@ from typing import Any, Optional
 from .events import bus
 from .models import Proxy
 from .settings import settings
-from .socks_bridge import manager as bridge_manager
 
 
 class AsocksError(RuntimeError):
@@ -199,9 +198,11 @@ class AsocksClient:
 
     @staticmethod
     def _to_upstream(port: dict, rotate: bool = False) -> Proxy:
-        """The raw Asocks proxy: SOCKS5 with user/pass auth (see asocks-api
-        notes). Not usable by Chrome directly — wrapped by the local bridge.
-        With `rotate`, the login's session token is re-rolled for a new exit IP."""
+        """Build the Asocks proxy as an HTTP proxy with user/pass auth. Chrome
+        authenticates HTTP proxies natively (CDP answers the 407 challenge), so
+        no local bridge is needed — unlike SOCKS5, which Chrome can't auth.
+        The same gateway host:port speaks HTTP and SOCKS5. With `rotate`, the
+        login's session token is re-rolled for a new exit IP."""
         raw = str(port.get("proxy") or "")
         host, sep, port_no = raw.rpartition(":")
         if not sep or not host or not port_no:
@@ -210,7 +211,7 @@ class AsocksClient:
         if rotate:
             login = _rotate_login(login)
         return Proxy(
-            server=f"socks5://{host}:{port_no}",
+            server=f"http://{host}:{port_no}",
             username=login,
             password=port.get("password"),
         )
@@ -252,18 +253,14 @@ class AsocksClient:
                 port = await self._await_new_port(country)
 
             upstream = self._to_upstream(port, rotate=fresh)
-            # Chrome can't authenticate SOCKS5, so route it through a local
-            # no-auth bridge that does the upstream user/pass handshake.
-            local = await bridge_manager.local_proxy_for(upstream)
             if not fresh:
-                self._cache[key] = (time.monotonic(), local)
+                self._cache[key] = (time.monotonic(), upstream)
             bus.emit(
                 "success", "system", "asocks",
                 "proxy rotated" if fresh else "proxy ready",
-                f"{port.get('countryCode') or '?'} · {upstream.server} "
-                f"via {local.server}",
+                f"{port.get('countryCode') or '?'} · {upstream.server}",
             )
-            return local
+            return upstream
 
     def _fresh(self, key: str) -> Optional[Proxy]:
         hit = self._cache.get(key)

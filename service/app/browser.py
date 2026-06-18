@@ -171,10 +171,15 @@ class BrowserManager:
                     )
                     browser = ephemeral
                     tab = await browser.get("about:blank")
+                    # Proxy auth (HTTP 407) is answered per CDP session, so it
+                    # must be installed on every tab we navigate: the warmup tab
+                    # here, and the work tab below.
                     if proxy.username or proxy.password:
                         await self._install_proxy_auth(tab, proxy)
                     await self._warmup(browser)
                     tab = await browser.get("about:blank", new_tab=True)
+                    if proxy.username or proxy.password:
+                        await self._install_proxy_auth(tab, proxy)
                 else:
                     browser = await self._get_shared(headless)
                     tab = await browser.get("about:blank", new_tab=True)
