@@ -36,6 +36,19 @@ class AsocksError(RuntimeError):
     """Any failure talking to the Asocks API or resolving a port."""
 
 
+def _num(value: Any) -> Optional[float]:
+    """Coerce an API value to a number; None when missing/unparseable.
+    The Asocks API sometimes returns numbers as strings."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _blocking_call(
     url: str, method: str, body: Optional[dict], timeout: float
 ) -> Any:
@@ -57,13 +70,17 @@ class AsocksClient:
         base_url: str,
         timeout_s: float,
         pool_ttl_s: float,
+        balance_ttl_s: float = 60.0,
     ) -> None:
         self._api_key = api_key
         self._base = base_url.rstrip("/")
         self._timeout = timeout_s
         self._pool_ttl = pool_ttl_s
+        self._balance_ttl = balance_ttl_s
         # country code ("" == any) -> (monotonic_ts, Proxy)
         self._cache: dict[str, tuple[float, Proxy]] = {}
+        # (monotonic_ts, normalised balance dict)
+        self._balance_cache: Optional[tuple[float, dict]] = None
         self._lock = asyncio.Lock()
 
     @property
@@ -104,6 +121,27 @@ class AsocksClient:
         """Account balance snapshot: money `balance` plus `balance_traffic`
         (bytes). Creating a port needs money balance even when traffic is left."""
         return await self._call("GET", "user/balance")
+
+    async def balance_info(self) -> dict:
+        """Normalised, briefly-cached balance for the admin panel:
+        `{balance, currency, traffic_bytes}`. Cached for `asocks_balance_ttl_s`
+        so polling the panel doesn't hammer the Asocks API. Values are `None`
+        when the API omits them; raises AsocksError on a failed call."""
+        now = time.monotonic()
+        if self._balance_cache and (now - self._balance_cache[0]) < self._balance_ttl:
+            return self._balance_cache[1]
+        raw = await self.balance()
+        # The API may nest the real payload under "message" (as proxy/ports does).
+        body = raw.get("message") if isinstance(raw.get("message"), dict) else raw
+        if not isinstance(body, dict):
+            body = {}
+        info = {
+            "balance": _num(body.get("balance")),
+            "currency": body.get("currency") or "USD",
+            "traffic_bytes": _num(body.get("balance_traffic")),
+        }
+        self._balance_cache = (now, info)
+        return info
 
     async def list_ports(self) -> list[dict]:
         data = await self._call("GET", "proxy/ports")
@@ -220,4 +258,5 @@ client = AsocksClient(
     base_url=settings.asocks_base_url,
     timeout_s=settings.asocks_timeout_s,
     pool_ttl_s=settings.asocks_pool_ttl_s,
+    balance_ttl_s=settings.asocks_balance_ttl_s,
 )

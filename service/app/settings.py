@@ -72,6 +72,9 @@ class Settings:
     # How long a resolved proxy is reused before we re-query the API. Keeps a
     # burst of requests from hammering the API or spawning duplicate ports.
     asocks_pool_ttl_s: float = float(os.environ.get("ASOCKS_POOL_TTL_S", "300"))
+    # How long a fetched balance/traffic snapshot is reused. The admin panel
+    # polls it, so this caps how often the Asocks API is hit for it.
+    asocks_balance_ttl_s: float = float(os.environ.get("ASOCKS_BALANCE_TTL_S", "60"))
     # create-port required fields (a missing one is a 422). Defaults mirror
     # Asocks' official PHP example; proxy_type_id=2 yields a SOCKS5 port with
     # user/pass auth, which Chrome reaches through the local bridge (see

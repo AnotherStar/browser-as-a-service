@@ -53,17 +53,22 @@ async def admin_status() -> JSONResponse:
 
 @router.get("/asocks", include_in_schema=False)
 async def admin_asocks() -> JSONResponse:
-    """On-demand Asocks diagnostics: whether a key is set, the account balance,
-    and how many proxy ports exist. Handy for spotting an empty balance (port
-    creation needs funds) without leaving the panel."""
+    """Asocks balance/traffic for the panel: whether a key is set, the money
+    `balance` (+ `currency`), remaining `traffic_bytes`, and how many proxy
+    ports exist. The balance is cached (`asocks_balance_ttl_s`), so the panel
+    can poll this on a timer without hammering the API. Handy for spotting an
+    empty balance (port creation needs funds) without leaving the panel."""
     if not asocks_client.configured:
         return JSONResponse({"configured": False})
     out: dict = {"configured": True}
     try:
-        out["balance"] = await asocks_client.balance()
-        out["ports"] = len(await asocks_client.list_ports())
+        out.update(await asocks_client.balance_info())
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)
+    try:
+        out["ports"] = len(await asocks_client.list_ports())
+    except Exception:  # noqa: BLE001 - ports are secondary; never hide balance
+        pass
     return JSONResponse(out)
 
 
@@ -236,36 +241,76 @@ _ADMIN_HTML = """<!doctype html>
   connect();
 
   // -- status badges (poll) --
+  var lastStatus = null;   // latest /admin/status payload
+  var asocksInfo = null;   // latest /admin/asocks payload
+
   function fmtUptime(s) {
     var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return (h ? h + 'ч ' : '') + (m ? m + 'м ' : '') + sec + 'с';
   }
-  function badge(cls, label, val) {
-    return '<span class="badge ' + cls + '">' + label + ' <b>' + val + '</b></span>';
+  function humanBytes(n) {
+    if (n == null) return '—';
+    var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0, v = n;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 || v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
   }
+  function fmtMoney(v, cur) {
+    if (v == null) return '—';
+    var n = (Math.round(v * 100) / 100).toFixed(2);
+    return cur === 'USD' || !cur ? '$' + n : n + ' ' + cur;
+  }
+  function badge(cls, label, val) {
+    return '<span class="badge ' + cls + '">' + label + ' <b>' + esc(val) + '</b></span>';
+  }
+
+  function renderBadges() {
+    if (!lastStatus) return;
+    var s = lastStatus, html = '';
+    html += badge('ok', 'сервис', 'up');
+    html += badge(s.browser_alive ? 'ok' : '', 'браузер',
+                  s.browser_alive ? 'активен' : 'ожидает');
+    html += badge(s.chrome_detected ? '' : 'bad', 'chrome',
+                  s.chrome_detected ? 'найден' : 'нет');
+    html += badge(s.asocks_configured ? 'ok' : '', 'asocks',
+                  s.asocks_configured ? 'подключён' : 'нет ключа');
+    // Asocks balance + remaining traffic (slower, separate poll).
+    if (s.asocks_configured && asocksInfo) {
+      if (asocksInfo.error) {
+        html += badge('bad', 'asocks', 'ошибка');
+      } else {
+        html += badge(asocksInfo.balance > 0 ? 'ok' : 'bad', 'баланс',
+                      fmtMoney(asocksInfo.balance, asocksInfo.currency));
+        html += badge(asocksInfo.traffic_bytes > 0 ? '' : 'bad', 'трафик',
+                      humanBytes(asocksInfo.traffic_bytes));
+      }
+    }
+    html += badge('', 'concurrency', s.max_concurrency);
+    html += badge(s.active_requests ? 'warn' : '', 'в работе', s.active_requests);
+    html += badge('', 'запросов', s.total_requests);
+    html += badge(s.errors ? 'bad' : '', 'ошибок', s.errors);
+    html += badge('', 'аптайм', fmtUptime(s.uptime_s));
+    badges.innerHTML = html;
+  }
+
   function refreshStatus() {
     fetch('admin/status').then(function (r) { return r.json(); }).then(function (s) {
-      var html = '';
-      html += badge('ok', 'сервис', 'up');
-      html += badge(s.browser_alive ? 'ok' : '', 'браузер',
-                    s.browser_alive ? 'активен' : 'ожидает');
-      html += badge(s.chrome_detected ? '' : 'bad', 'chrome',
-                    s.chrome_detected ? 'найден' : 'нет');
-      html += badge(s.asocks_configured ? 'ok' : '', 'asocks',
-                    s.asocks_configured ? 'подключён' : 'нет ключа');
-      html += badge('', 'concurrency', s.max_concurrency);
-      html += badge(s.active_requests ? 'warn' : '', 'в работе', s.active_requests);
-      html += badge('', 'запросов', s.total_requests);
-      html += badge(s.errors ? 'bad' : '', 'ошибок', s.errors);
-      html += badge('', 'аптайм', fmtUptime(s.uptime_s));
-      badges.innerHTML = html;
+      lastStatus = s;
+      renderBadges();
     }).catch(function () {
       live.classList.remove('live');
       badges.innerHTML = badge('bad', 'сервис', 'недоступен');
     });
   }
+  function refreshAsocks() {
+    fetch('admin/asocks').then(function (r) { return r.json(); }).then(function (a) {
+      asocksInfo = a.configured ? a : null;
+      renderBadges();
+    }).catch(function () { /* keep last known balance */ });
+  }
   refreshStatus();
+  refreshAsocks();
   setInterval(refreshStatus, 3000);
+  setInterval(refreshAsocks, 30000);  // balance is cached server-side (~60s)
 
   document.getElementById('clear').onclick = function () {
     log.innerHTML = ''; count = 0; countEl.textContent = '0 событий';
