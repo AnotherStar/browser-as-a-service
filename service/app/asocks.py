@@ -167,13 +167,18 @@ class AsocksClient:
         self, country_code: str, name: Optional[str] = None
     ) -> None:
         # type_id / proxy_type_id / server_port_type_id are required by the API
-        # (a missing one is a 422). Defaults yield a SOCKS5 port with auth.
+        # (a missing one is a 422). Pin the city (Moscow): no-city IPs get
+        # flagged by Ozon's antibot even with a good fingerprint.
         body: dict[str, Any] = {
             "country_code": country_code,
             "type_id": settings.asocks_type_id,
             "proxy_type_id": settings.asocks_proxy_type_id,
             "server_port_type_id": settings.asocks_server_port_type_id,
         }
+        if settings.asocks_state:
+            body["state"] = settings.asocks_state
+        if settings.asocks_city:
+            body["city"] = settings.asocks_city
         if name:
             body["name"] = name
         await self._call("POST", "proxy/create-port", body)

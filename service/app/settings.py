@@ -90,6 +90,11 @@ class Settings:
     # Exposed as env in case a plan needs different ids.
     asocks_type_id: int = int(os.environ.get("ASOCKS_TYPE_ID", "1"))
     asocks_proxy_type_id: int = int(os.environ.get("ASOCKS_PROXY_TYPE_ID", "2"))
+    # Geo for auto-created ports. City matters: Moscow-city IPs pass Ozon, while
+    # "no city" IPs get flagged (captcha) even with a good fingerprint. Empty
+    # string disables that axis.
+    asocks_state: str = os.environ.get("ASOCKS_STATE", "Moscow")
+    asocks_city: str = os.environ.get("ASOCKS_CITY", "Moscow")
     asocks_server_port_type_id: int = int(
         os.environ.get("ASOCKS_SERVER_PORT_TYPE_ID", "1")
     )
