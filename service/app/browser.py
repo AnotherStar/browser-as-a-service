@@ -72,6 +72,68 @@ async def apply_cookies(
         await browser.cookies.set_all(params)
 
 
+# --- Windows fingerprint spoof (see BrowserManager._apply_stealth) --------- #
+# UA pinned to the real Chrome major running on the server (149) so version
+# checks stay consistent; only the OS axis is masked.
+_WIN_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+)
+
+
+def _win_ua_metadata():
+    """Client Hints (navigator.userAgentData) matching _WIN_UA — Windows 11."""
+    bv = cdp.emulation.UserAgentBrandVersion
+    brands = [
+        bv(brand="Chromium", version="149"),
+        bv(brand="Google Chrome", version="149"),
+        bv(brand="Not?A_Brand", version="24"),
+    ]
+    full = [
+        bv(brand="Chromium", version="149.0.0.0"),
+        bv(brand="Google Chrome", version="149.0.0.0"),
+        bv(brand="Not?A_Brand", version="24.0.0.0"),
+    ]
+    return cdp.emulation.UserAgentMetadata(
+        brands=brands,
+        full_version_list=full,
+        full_version="149.0.0.0",
+        platform="Windows",
+        platform_version="15.0.0",
+        architecture="x86",
+        model="",
+        mobile=False,
+        bitness="64",
+        wow64=False,
+    )
+
+
+# Runs before page scripts on every navigation: align the JS-visible signals
+# that CDP doesn't cover (core count, memory, languages) and spoof the WebGL
+# renderer away from SwiftShader to a common consumer GPU.
+_SPOOF_JS = """
+(() => {
+  const def = (o, p, v) => { try { Object.defineProperty(o, p, {get: () => v}); } catch (e) {} };
+  def(navigator, 'hardwareConcurrency', 8);
+  def(navigator, 'deviceMemory', 8);
+  def(navigator, 'languages', ['ru-RU', 'ru']);
+  const V = 'Google Inc. (NVIDIA)';
+  const R = 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0, D3D11)';
+  const protos = [];
+  if (self.WebGLRenderingContext) protos.push(WebGLRenderingContext.prototype);
+  if (self.WebGL2RenderingContext) protos.push(WebGL2RenderingContext.prototype);
+  for (const pr of protos) {
+    const gp = pr.getParameter;
+    pr.getParameter = function (p) {
+      if (p === 37445) return V;
+      if (p === 37446) return R;
+      return gp.call(this, p);
+    };
+  }
+})();
+"""
+
+
 class BrowserManager:
     def __init__(self) -> None:
         self._shared: Optional[uc.Browser] = None
@@ -129,9 +191,11 @@ class BrowserManager:
 
     @staticmethod
     async def _apply_stealth(tab) -> None:
-        """Nudge the fingerprint toward a real Russian user before navigation:
-        Moscow timezone and ru-RU locale. The headless Linux default leaks UTC +
-        en-US, which on a Russian site + Russian proxy IP reads as a bot."""
+        """Mask the headless-Linux fingerprint as a real Russian Windows user,
+        applied before navigation. Ozon's antibot challenges our default
+        fingerprint (Linux UA, SwiftShader GPU, UTC, en-US, low core count)
+        with a captcha even on a clean IP; a consistent Windows profile passes.
+        Each piece must agree (UA ⇄ platform ⇄ Client Hints ⇄ WebGL)."""
         with contextlib.suppress(Exception):
             await tab.send(
                 cdp.emulation.set_timezone_override(
@@ -140,6 +204,19 @@ class BrowserManager:
             )
         with contextlib.suppress(Exception):
             await tab.send(cdp.emulation.set_locale_override(locale=settings.lang))
+        with contextlib.suppress(Exception):
+            await tab.send(
+                cdp.emulation.set_user_agent_override(
+                    user_agent=_WIN_UA,
+                    accept_language=settings.accept_lang,
+                    platform="Win32",
+                    user_agent_metadata=_win_ua_metadata(),
+                )
+            )
+        with contextlib.suppress(Exception):
+            await tab.send(
+                cdp.page.add_script_to_evaluate_on_new_document(source=_SPOOF_JS)
+            )
 
     # -- proxy auth -------------------------------------------------------- #
 
