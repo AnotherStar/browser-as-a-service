@@ -3,3 +3,6 @@ uvicorn[standard]>=0.30
 # zendriver: maintained fork of nodriver (works on Python 3.14, unlike
 # nodriver 0.50.3 which ships a non-UTF-8 byte in cdp/network.py).
 zendriver>=0.15.3
+# Loads the project-root .env so config (e.g. ASOCKS_API_KEY) works regardless
+# of the process CWD. Optional at runtime — settings.py degrades gracefully.
+python-dotenv>=1.0

@@ -2,6 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "service: free-port",
+      "type": "shell",
+      "command": "lsof -ti tcp:8077 | xargs kill 2>/dev/null; true",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "service: run",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/python",
@@ -12,6 +22,7 @@
         "--port",
         "8077"
       ],
+      "dependsOn": "service: free-port",
       "options": {
         "cwd": "${workspaceFolder}/service"
       },

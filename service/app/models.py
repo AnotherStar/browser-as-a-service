@@ -176,6 +176,18 @@ class RunRequest(BaseModel):
         "(equivalent to a leading navigate step).",
     )
     proxy: Optional[Proxy] = Field(None, description="Optional proxy for this run.")
+    use_proxy: bool = Field(
+        False,
+        description="Route this run through an Asocks residential proxy "
+        "(https://asocks.com). Ignored when an explicit `proxy` is given. "
+        "Requires ASOCKS_API_KEY on the server.",
+    )
+    proxy_country: Optional[str] = Field(
+        None,
+        description="ISO country code for the Asocks proxy, e.g. 'RU'. "
+        "Omit to use any available port. Only used when `use_proxy` is true.",
+        examples=["RU"],
+    )
     cookies: Optional[list[Cookie]] = Field(
         None,
         description="Cookies set before the first navigation (e.g. region "
@@ -233,6 +245,17 @@ class RunResponse(BaseModel):
 class OzonPriceRequest(BaseModel):
     url: str = Field(..., description="Ozon product page URL.")
     proxy: Optional[Proxy] = None
+    use_proxy: bool = Field(
+        False,
+        description="Route through an Asocks residential proxy. Ignored when "
+        "an explicit `proxy` is given. Requires ASOCKS_API_KEY on the server.",
+    )
+    proxy_country: Optional[str] = Field(
+        None,
+        description="ISO country code for the Asocks proxy, e.g. 'RU'. "
+        "Omit for any available port. Only used when `use_proxy` is true.",
+        examples=["RU"],
+    )
     cookies: Optional[list[Cookie]] = Field(
         None,
         description="Cookies set before navigation (e.g. region pinning).",

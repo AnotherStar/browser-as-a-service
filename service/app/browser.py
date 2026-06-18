@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import zendriver as uc
 from zendriver import cdp
 
+from .events import bus
 from .models import Cookie, Proxy
 from .settings import settings
 
@@ -84,8 +85,13 @@ class BrowserManager:
     async def _get_shared(self, headless: bool) -> uc.Browser:
         async with self._shared_lock:
             if self._shared is None:
+                bus.emit(
+                    "info", "system", "system", "launching browser",
+                    f"headless={headless}",
+                )
                 self._shared = await self._launch(headless=headless)
                 await self._warmup(self._shared)
+                bus.emit("success", "system", "system", "browser ready", "")
             return self._shared
 
     @staticmethod
@@ -176,7 +182,7 @@ class BrowserManager:
             finally:
                 if ephemeral is not None:
                     with contextlib.suppress(Exception):
-                        ephemeral.stop()
+                        await ephemeral.stop()
                 elif tab is not None:
                     with contextlib.suppress(Exception):
                         await tab.close()
@@ -188,11 +194,17 @@ class BrowserManager:
         except Exception:
             return False
 
+    def is_alive(self) -> bool:
+        """Whether the shared browser is currently up. Unlike `health`, this
+        never launches one — safe for the admin status snapshot."""
+        return self._shared is not None
+
     async def shutdown(self) -> None:
         if self._shared is not None:
             with contextlib.suppress(Exception):
-                self._shared.stop()
+                await self._shared.stop()
             self._shared = None
+            bus.emit("info", "system", "system", "browser stopped", "")
 
 
 manager = BrowserManager()

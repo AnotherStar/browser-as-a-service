@@ -4,6 +4,19 @@ from __future__ import annotations
 import os
 import pathlib
 
+# Load the repo-root .env before reading any settings. The service is started
+# from `service/`, but `.env` lives at the project root, so a bare `load_dotenv`
+# (which searches the CWD) would miss it — we point at the root explicitly.
+# Real environment variables still win (override=False), so deployments can
+# override without editing the file. Degrades gracefully if python-dotenv is
+# absent.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(pathlib.Path(__file__).resolve().parents[2] / ".env")
+except ImportError:  # pragma: no cover - optional dependency
+    pass
+
 
 def _detect_chrome() -> str | None:
     """Find a real Chrome/Chromium. We deliberately avoid the homebrew
@@ -46,6 +59,28 @@ class Settings:
     warmup_settle_s: float = float(os.environ.get("WARMUP_SETTLE_S", "4.0"))
     # Per-run hard timeout.
     run_timeout_s: float = float(os.environ.get("RUN_TIMEOUT_S", "90"))
+
+    # -- Asocks proxy provider (https://api.asocks.com/v2) ------------------ #
+    # API key. When set, callers can opt a request into a residential proxy
+    # with `use_proxy: true` instead of supplying a `proxy` by hand.
+    asocks_api_key: str | None = os.environ.get("ASOCKS_API_KEY")
+    asocks_base_url: str = os.environ.get(
+        "ASOCKS_BASE_URL", "https://api.asocks.com/v2"
+    )
+    # Per-call HTTP timeout against the Asocks API.
+    asocks_timeout_s: float = float(os.environ.get("ASOCKS_TIMEOUT_S", "30"))
+    # How long a resolved proxy is reused before we re-query the API. Keeps a
+    # burst of requests from hammering the API or spawning duplicate ports.
+    asocks_pool_ttl_s: float = float(os.environ.get("ASOCKS_POOL_TTL_S", "300"))
+    # create-port required fields (a missing one is a 422). Defaults mirror
+    # Asocks' official PHP example; proxy_type_id=2 yields a SOCKS5 port with
+    # user/pass auth, which Chrome reaches through the local bridge (see
+    # socks_bridge.py). Exposed as env in case a plan needs different ids.
+    asocks_type_id: int = int(os.environ.get("ASOCKS_TYPE_ID", "1"))
+    asocks_proxy_type_id: int = int(os.environ.get("ASOCKS_PROXY_TYPE_ID", "2"))
+    asocks_server_port_type_id: int = int(
+        os.environ.get("ASOCKS_SERVER_PORT_TYPE_ID", "1")
+    )
 
 
 settings = Settings()

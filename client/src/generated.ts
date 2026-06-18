@@ -127,6 +127,8 @@ const RunRequest = z
       .min(1),
     start_url: z.union([z.string(), z.null()]).optional(),
     proxy: z.union([Proxy, z.null()]).optional(),
+    use_proxy: z.boolean().optional().default(false),
+    proxy_country: z.union([z.string(), z.null()]).optional(),
     cookies: z.union([z.array(Cookie), z.null()]).optional(),
     headless: z.boolean().optional().default(false),
   })
@@ -166,6 +168,8 @@ const OzonPriceRequest = z
   .object({
     url: z.string(),
     proxy: z.union([Proxy, z.null()]).optional(),
+    use_proxy: z.boolean().optional().default(false),
+    proxy_country: z.union([z.string(), z.null()]).optional(),
     cookies: z.union([z.array(Cookie), z.null()]).optional(),
     headless: z.boolean().optional().default(false),
     use_cache: z.boolean().optional().default(true),
