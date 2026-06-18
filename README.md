@@ -62,10 +62,21 @@ npm run example:price -- "https://www.ozon.ru/product/...."
 ```ts
 import { createScrapeClient } from "browser-as-a-service-client";
 
+// локально, без авторизации
 const client = createScrapeClient("http://127.0.0.1:8077");
 
-// удобный эндпоинт
-const { price_value, card_price_value } = await client.ozonPrice({ url });
+// публичный эндпоинт за HTTP basic auth (https://baas.mse.plus)
+const remote = createScrapeClient("https://baas.mse.plus", {
+  username: "baas",
+  password: process.env.BAAS_PASSWORD!,
+});
+
+// удобный эндпоинт (через прокси: use_proxy + proxy_country)
+const { price_value, card_price_value } = await remote.ozonPrice({
+  url,
+  use_proxy: true,
+  proxy_country: "RU",
+});
 
 // универсальный сценарий из «команд» — полностью типизирован
 const { data } = await client.run({

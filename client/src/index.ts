@@ -35,16 +35,38 @@ export type HealthResponse = z.infer<typeof schemas.HealthResponse>;
  * Create a typesafe client.
  *
  * @example
+ * // local, no auth
  * const client = createScrapeClient("http://127.0.0.1:8077");
- * const { price_value } = await client.ozonPrice({ url });
+ *
+ * @example
+ * // public endpoint behind HTTP basic auth (https://baas.mse.plus)
+ * const client = createScrapeClient("https://baas.mse.plus", {
+ *   username: "baas",
+ *   password: process.env.BAAS_PASSWORD!,
+ * });
+ * const { price_value } = await client.ozonPrice({ url, use_proxy: true, proxy_country: "RU" });
  */
 export function createScrapeClient(
   baseUrl: string,
-  options?: { token?: string; timeoutMs?: number },
+  options?: {
+    /** HTTP basic auth username (e.g. for https://baas.mse.plus). */
+    username?: string;
+    /** HTTP basic auth password. */
+    password?: string;
+    /** Bearer token, sent as `Authorization: Bearer <token>`. */
+    token?: string;
+    timeoutMs?: number;
+  },
 ) {
   const api = createApiClient(baseUrl, {
     axiosConfig: {
       timeout: options?.timeoutMs ?? 120_000,
+      // Basic auth — axios emits the `Authorization: Basic` header on every
+      // request when `auth` is set.
+      auth:
+        options?.username != null
+          ? { username: options.username, password: options.password ?? "" }
+          : undefined,
       headers: options?.token
         ? { Authorization: `Bearer ${options.token}` }
         : undefined,
