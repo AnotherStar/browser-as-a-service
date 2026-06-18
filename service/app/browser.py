@@ -214,6 +214,7 @@ class BrowserManager:
                 )
             )
         with contextlib.suppress(Exception):
+            await tab.send(cdp.page.enable())
             await tab.send(
                 cdp.page.add_script_to_evaluate_on_new_document(source=_SPOOF_JS)
             )
