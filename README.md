@@ -118,6 +118,15 @@ discriminated union по полю `action`. Добавить новую кома
 - **Headless палится.** Ozon отдаёт заглушку «Похоже, нет соединения» / `Antibot
   Captcha`. Нужен **headful** Chrome (обычное окно). На Linux-сервере это значит
   виртуальный дисплей — **Xvfb** (`xvfb-run -a python -m uvicorn ...`).
+- **Fingerprint headless-Linux Chrome палится — это была главная причина капчи.**
+  Дефолтный отпечаток на сервере кричит «бот»: нет WebGL, таймзона UTC,
+  `languages=en-US`, `platform=Linux`, SwiftShader-GPU. Ozon даёт слайдер-капчу
+  даже с чистого (residential) IP. Решение — `BrowserManager._apply_stealth`
+  ([browser.py](./service/app/browser.py)): маскировка под реального
+  RU-Windows-юзера через CDP (UA + Client Hints = Windows, `Europe/Moscow`,
+  `ru-RU`) + pre-load скрипт (WebGL→NVIDIA, `hardwareConcurrency`/`deviceMemory`,
+  чистый `languages`). Важно: скрипт-инъекция работает только после
+  `Page.enable()`. С этим капча уходит, карточка отдаёт цену.
 - **Холодный заход на карточку палится.** Поэтому сервис при старте браузера
   один раз заходит на главную (`WARMUP_URL`), получает антибот-куки сессии, и
   только потом ходит на товары. Это снимает капчу.
