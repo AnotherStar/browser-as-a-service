@@ -51,8 +51,12 @@ class Settings:
     default_headless: bool = os.environ.get("HEADLESS", "0") == "1"
     # Ozon price cache TTL.
     price_cache_ttl_s: float = float(os.environ.get("PRICE_CACHE_TTL_S", "900"))
-    # Browser language.
+    # Browser language / locale (drives navigator.language(s) + Intl).
     lang: str = os.environ.get("BROWSER_LANG", "ru-RU")
+    accept_lang: str = os.environ.get("ACCEPT_LANG", "ru-RU,ru;q=0.9,en;q=0.8")
+    # Timezone the browser reports (CDP override). A headless Linux box defaults
+    # to UTC, which on a Russian site + Russian proxy IP reads as a bot.
+    browser_timezone: str = os.environ.get("BROWSER_TIMEZONE", "Europe/Moscow")
     # URL visited once right after a browser launches, to acquire anti-bot
     # session cookies before any "cold" product hit. Empty disables it.
     warmup_url: str = os.environ.get("WARMUP_URL", "https://www.ozon.ru/")

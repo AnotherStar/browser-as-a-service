@@ -107,7 +107,18 @@ class BrowserManager:
     async def _launch(
         self, headless: bool, proxy_server: Optional[str] = None
     ) -> uc.Browser:
-        args = [f"--lang={settings.lang}"]
+        args = [
+            f"--lang={settings.lang}",
+            f"--accept-lang={settings.accept_lang}",
+            # Without a GPU (headless server / Xvfb) Chrome exposes NO WebGL at
+            # all — a strong bot signal. Force ANGLE/SwiftShader so a WebGL
+            # context (with a renderer string) exists.
+            "--enable-unsafe-swiftshader",
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
+            "--ignore-gpu-blocklist",
+            "--window-size=1920,1080",
+        ]
         if proxy_server:
             args.append(f"--proxy-server={proxy_server}")
         return await uc.start(
@@ -115,6 +126,20 @@ class BrowserManager:
             browser_executable_path=settings.chrome_path,
             browser_args=args,
         )
+
+    @staticmethod
+    async def _apply_stealth(tab) -> None:
+        """Nudge the fingerprint toward a real Russian user before navigation:
+        Moscow timezone and ru-RU locale. The headless Linux default leaks UTC +
+        en-US, which on a Russian site + Russian proxy IP reads as a bot."""
+        with contextlib.suppress(Exception):
+            await tab.send(
+                cdp.emulation.set_timezone_override(
+                    timezone_id=settings.browser_timezone
+                )
+            )
+        with contextlib.suppress(Exception):
+            await tab.send(cdp.emulation.set_locale_override(locale=settings.lang))
 
     # -- proxy auth -------------------------------------------------------- #
 
@@ -171,6 +196,7 @@ class BrowserManager:
                     )
                     browser = ephemeral
                     tab = await browser.get("about:blank")
+                    await self._apply_stealth(tab)
                     # Proxy auth (HTTP 407) is answered per CDP session, so it
                     # must be installed on every tab we navigate: the warmup tab
                     # here, and the work tab below.
@@ -178,11 +204,13 @@ class BrowserManager:
                         await self._install_proxy_auth(tab, proxy)
                     await self._warmup(browser)
                     tab = await browser.get("about:blank", new_tab=True)
+                    await self._apply_stealth(tab)
                     if proxy.username or proxy.password:
                         await self._install_proxy_auth(tab, proxy)
                 else:
                     browser = await self._get_shared(headless)
                     tab = await browser.get("about:blank", new_tab=True)
+                    await self._apply_stealth(tab)
                 yield browser, tab
             finally:
                 if ephemeral is not None:
