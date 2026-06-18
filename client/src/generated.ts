@@ -129,6 +129,7 @@ const RunRequest = z
     proxy: z.union([Proxy, z.null()]).optional(),
     use_proxy: z.boolean().optional().default(false),
     proxy_country: z.union([z.string(), z.null()]).optional(),
+    rotate_proxy: z.boolean().optional().default(false),
     cookies: z.union([z.array(Cookie), z.null()]).optional(),
     headless: z.boolean().optional().default(false),
   })
@@ -164,31 +165,6 @@ const HTTPValidationError = z
   .object({ detail: z.array(ValidationError) })
   .partial()
   .passthrough();
-const OzonPriceRequest = z
-  .object({
-    url: z.string(),
-    proxy: z.union([Proxy, z.null()]).optional(),
-    use_proxy: z.boolean().optional().default(false),
-    proxy_country: z.union([z.string(), z.null()]).optional(),
-    cookies: z.union([z.array(Cookie), z.null()]).optional(),
-    headless: z.boolean().optional().default(false),
-    use_cache: z.boolean().optional().default(true),
-  })
-  .passthrough();
-const OzonPriceResponse = z
-  .object({
-    ok: z.boolean(),
-    url: z.string(),
-    title: z.union([z.string(), z.null()]).optional(),
-    price_text: z.union([z.string(), z.null()]).optional(),
-    price_value: z.union([z.number(), z.null()]).optional(),
-    card_price_value: z.union([z.number(), z.null()]).optional(),
-    cached: z.boolean().optional().default(false),
-    fetched_at: z.union([z.string(), z.null()]).optional(),
-    elapsed_ms: z.number().int().optional().default(0),
-    error: z.union([z.string(), z.null()]).optional(),
-  })
-  .passthrough();
 
 export const schemas = {
   HealthResponse,
@@ -210,8 +186,6 @@ export const schemas = {
   RunResponse,
   ValidationError,
   HTTPValidationError,
-  OzonPriceRequest,
-  OzonPriceResponse,
 };
 
 const endpoints = makeApi([
@@ -221,28 +195,6 @@ const endpoints = makeApi([
     alias: "health_health_get",
     requestFormat: "json",
     response: HealthResponse,
-  },
-  {
-    method: "post",
-    path: "/ozon/price",
-    alias: "ozon_price_ozon_price_post",
-    description: `Convenience endpoint: open an Ozon product page and return its price.`,
-    requestFormat: "json",
-    parameters: [
-      {
-        name: "body",
-        type: "Body",
-        schema: OzonPriceRequest,
-      },
-    ],
-    response: OzonPriceResponse,
-    errors: [
-      {
-        status: 422,
-        description: `Validation Error`,
-        schema: HTTPValidationError,
-      },
-    ],
   },
   {
     method: "post",

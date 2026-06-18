@@ -27,8 +27,6 @@ export type Step = z.infer<
 >;
 export type RunRequest = z.infer<typeof schemas.RunRequest>;
 export type RunResponse = z.infer<typeof schemas.RunResponse>;
-export type OzonPriceRequest = z.infer<typeof schemas.OzonPriceRequest>;
-export type OzonPriceResponse = z.infer<typeof schemas.OzonPriceResponse>;
 export type HealthResponse = z.infer<typeof schemas.HealthResponse>;
 
 /**
@@ -44,7 +42,10 @@ export type HealthResponse = z.infer<typeof schemas.HealthResponse>;
  *   username: "baas",
  *   password: process.env.BAAS_PASSWORD!,
  * });
- * const { price_value } = await client.ozonPrice({ url, use_proxy: true, proxy_country: "RU" });
+ * const { data } = await client.run({
+ *   start_url: url, use_proxy: true, proxy_country: "RU",
+ *   steps: [{ action: "extract", name: "price", selector: "[data-widget=webPrice]" }],
+ * });
  */
 export function createScrapeClient(
   baseUrl: string,
@@ -78,10 +79,6 @@ export function createScrapeClient(
     raw: api,
     health(): Promise<HealthResponse> {
       return api.health_health_get();
-    },
-    /** Open an Ozon product page and return its parsed price. */
-    ozonPrice(body: OzonPriceRequest): Promise<OzonPriceResponse> {
-      return api.ozon_price_ozon_price_post(body);
     },
     /** Run an arbitrary command scenario and return extracted data. */
     run(body: RunRequest): Promise<RunResponse> {

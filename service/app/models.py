@@ -188,6 +188,12 @@ class RunRequest(BaseModel):
         "Omit to use any available port. Only used when `use_proxy` is true.",
         examples=["RU"],
     )
+    rotate_proxy: bool = Field(
+        False,
+        description="Bypass the proxy cache and rotate to a fresh Asocks exit "
+        "IP. Set true when retrying past an antibot wall so the retry uses a new "
+        "IP. Only used when `use_proxy` is true.",
+    )
     cookies: Optional[list[Cookie]] = Field(
         None,
         description="Cookies set before the first navigation (e.g. region "
@@ -234,52 +240,6 @@ class RunResponse(BaseModel):
         default_factory=dict, description="Extracted values keyed by step `name`."
     )
     steps: list[StepResult] = Field(default_factory=list)
-    error: Optional[str] = None
-
-
-# --------------------------------------------------------------------------- #
-# Convenience: Ozon price                                                      #
-# --------------------------------------------------------------------------- #
-
-
-class OzonPriceRequest(BaseModel):
-    url: str = Field(..., description="Ozon product page URL.")
-    proxy: Optional[Proxy] = None
-    use_proxy: bool = Field(
-        False,
-        description="Route through an Asocks residential proxy. Ignored when "
-        "an explicit `proxy` is given. Requires ASOCKS_API_KEY on the server.",
-    )
-    proxy_country: Optional[str] = Field(
-        None,
-        description="ISO country code for the Asocks proxy, e.g. 'RU'. "
-        "Omit for any available port. Only used when `use_proxy` is true.",
-        examples=["RU"],
-    )
-    cookies: Optional[list[Cookie]] = Field(
-        None,
-        description="Cookies set before navigation (e.g. region pinning).",
-    )
-    headless: bool = Field(False, description="Keep false; Ozon blocks headless.")
-    use_cache: bool = Field(True, description="Serve a recent cached value if present.")
-
-
-class OzonPriceResponse(BaseModel):
-    ok: bool
-    url: str
-    title: Optional[str] = None
-    price_text: Optional[str] = Field(
-        None, description="Raw price block text as shown on the page."
-    )
-    price_value: Optional[int] = Field(
-        None, description="Best-effort main price parsed to an integer (rubles)."
-    )
-    card_price_value: Optional[int] = Field(
-        None, description="Best-effort 'Ozon Card' price parsed to an integer."
-    )
-    cached: bool = False
-    fetched_at: Optional[str] = Field(None, description="ISO timestamp of fetch.")
-    elapsed_ms: int = 0
     error: Optional[str] = None
 
 

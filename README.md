@@ -38,10 +38,19 @@ cd service
 Проверка:
 ```bash
 curl localhost:8077/health
-curl -X POST localhost:8077/ozon/price -H 'content-type: application/json' \
-  -d '{"url":"https://www.ozon.ru/product/...."}'
+curl -X POST localhost:8077/run -H 'content-type: application/json' -d '{
+  "start_url":"https://www.ozon.ru/product/....",
+  "use_proxy":true, "proxy_country":"RU",
+  "steps":[{"action":"extract","name":"price","selector":"[data-widget=webPrice]"}]
+}'
 ```
 Swagger UI: <http://localhost:8077/docs>
+
+> **baas — generic.** Сервис даёт один рабочий примитив — `/run` (выполнить
+> сценарий шагов в пробитом через антибот/прокси/фингерпринт Chrome и вернуть
+> DOM). Парсинг конкретного маркетплейса, что считать «блоком» и ретраи —
+> **на стороне вызывающего** (напр. ai-seller). Раньше был `/ozon/price` —
+> убран как протечка Ozon-логики в инфраструктуру.
 
 **Админ-панель** поднимается вместе с сервисом (отдельный процесс не нужен):
 <http://localhost:8077/admin>. В ней «бегут» живые логи — кто (IP клиента) и что
@@ -74,22 +83,20 @@ const remote = createScrapeClient("https://baas.mse.plus", {
   password: process.env.BAAS_PASSWORD!,
 });
 
-// удобный эндпоинт (через прокси: use_proxy + proxy_country)
-const { price_value, card_price_value } = await remote.ozonPrice({
-  url,
+// универсальный сценарий из «команд» — полностью типизирован.
+// use_proxy + proxy_country — пробить через резидентный прокси;
+// rotate_proxy: true на ретрае — взять свежий exit-IP.
+const { data } = await remote.run({
+  start_url: url,
   use_proxy: true,
   proxy_country: "RU",
-});
-
-// универсальный сценарий из «команд» — полностью типизирован
-const { data } = await client.run({
-  start_url: url,
   steps: [
     { action: "wait_for", selector: "[data-widget=webPrice]" },
     { action: "extract", name: "price", selector: "[data-widget=webPrice]", kind: "text" },
     { action: "extract", name: "title", selector: "h1" },
   ],
 });
+// парсинг/классификацию блока/ретраи делает вызывающий код
 ```
 
 ## Как обновлять клиент при изменении API
@@ -132,9 +139,9 @@ discriminated union по полю `action`. Добавить новую кома
   только потом ходит на товары. Это снимает капчу.
 - **Бан по IP — самое слабое место, и zendriver его НЕ решает** (это просто
   контроллер браузера). Стратегия:
-  1. **Троттлинг + кэш** (заложено: `MIN_INTERVAL_S`, `JITTER_S`,
-     `PRICE_CACHE_TTL_S`). Для мониторинга своих цен редких заходов часто хватает
-     и со своего IP.
+  1. **Троттлинг** (заложено: `MIN_INTERVAL_S`, `JITTER_S`) + кэш результатов
+     на стороне вызывающего. Для мониторинга своих цен редких заходов часто
+     хватает и со своего IP.
   2. **Резидентные/мобильные прокси с ротацией** при масштабе. Датацентровые IP
      Ozon режет мгновенно — не тратить время.
   3. Прокси с логином/паролем поддержаны через CDP `Fetch.continueWithAuth`
@@ -173,14 +180,13 @@ discriminated union по полю `action`. Добавить новую кома
 
 **Ротация при бане по IP.** Ozon отбраковывает IP по репутации: часть прокси он
 жёстко блокирует («Похоже, нет соединения / Выключите VPN»), часть пускает, но
-показывает капчу. Поэтому `/ozon/price` под Asocks-прокси при упоре в антибот
-сам **меняет сессию (новый exit-IP) и повторяет** — до `SCRAPE_MAX_ATTEMPTS` раз
-(по умолчанию 2; каждая попытка тратит трафик, поэтому немного). Если пробить не
-удалось, ответ приходит с `ok:false` и понятным `error` (`proxy exit IP rejected
-as VPN/proxy` либо `captcha challenge shown`), а в админ-логах видно
-`ozon antibot, rotating proxy`. Чистого результата добиваются прокси, которым
-Ozon доверяет (резидентные/мобильные с хорошей репутацией) — ротация лишь
-перебирает выданный пул.
+показывает капчу. baas сам не решает, что считать блоком (это знание о
+конкретном маркетплейсе) — но даёт примитив: на повторном `/run` передай
+**`rotate_proxy: true`**, и запрос пойдёт через **свежий exit-IP** (иначе
+попадёшь в тот же закэшированный). Логику «увидел блок → повтори с
+`rotate_proxy`» строит вызывающий код. Чистого результата добиваются прокси,
+которым Ozon доверяет (резидентные/мобильные с хорошей репутацией) — ротация
+лишь перебирает выданный пул.
 
 **Порты создавать с городом (Moscow), а не «без города».** Эмпирически: IP без
 привязки к городу Ozon метит капчей даже с правильным фингерпринтом, а
@@ -203,7 +209,7 @@ mobile + residential, все Moscow.
 
 - проще всего — query-параметром в `start_url` там, где он работает (Я.Маркет:
   `?lr=213` — Москва);
-- универсально — куки через поле `cookies` запроса (`/run` и `/ozon/price`).
+- универсально — куки через поле `cookies` запроса `/run`.
   Куки ставятся ДО первой навигации; домен по умолчанию берётся из `start_url`
   (регистрируемый, напр. `.ozon.ru`), так что переписывать host на каждой куке
   не нужно.
@@ -221,11 +227,9 @@ mobile + residential, все Moscow.
 | `CHROME_PATH` | автоопределение | путь к Chrome (избегает битого homebrew chromium) |
 | `MAX_CONCURRENCY` | `1` | одновременных операций браузера |
 | `MIN_INTERVAL_S` / `JITTER_S` | `2.0` / `1.5` | пауза между заходами (анти-бан) |
-| `PRICE_CACHE_TTL_S` | `900` | TTL кэша цен Ozon |
 | `WARMUP_URL` | `https://www.ozon.ru/` | прогрев сессии при старте браузера |
 | `HEADLESS` | `0` | `1` включит headless (Ozon заблокирует) |
 | `RUN_TIMEOUT_S` | `90` | жёсткий таймаут одного запуска |
-| `SCRAPE_MAX_ATTEMPTS` | `2` | попыток `/ozon/price` под Asocks-прокси (ротация IP при антиботе); `1` — без ретраев |
 | `ASOCKS_API_KEY` | — | ключ Asocks; включает `use_proxy` в запросах |
 | `ASOCKS_POOL_TTL_S` | `300` | сколько переиспользовать выданный порт |
 | `ASOCKS_BASE_URL` | `https://api.asocks.com/v2` | база API Asocks |

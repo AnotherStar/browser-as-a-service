@@ -1,5 +1,5 @@
 /**
- * Example: fetch an Ozon price and run a custom scenario.
+ * Example: run a command scenario against a bot-protected product page.
  * Run with:  npm run example:price -- "https://www.ozon.ru/product/..."
  */
 import { createScrapeClient } from "../src/index.js";
@@ -15,18 +15,12 @@ async function main() {
   const health = await client.health();
   console.log("health:", health);
 
-  // 1) Convenience endpoint
-  const price = await client.ozonPrice({ url, use_cache: true });
-  console.log("ozonPrice:", {
-    ok: price.ok,
-    price_value: price.price_value,
-    card_price_value: price.card_price_value,
-    price_text: price.price_text,
-  });
-
-  // 2) Generic command scenario — fully typed
+  // Generic command scenario — fully typed. Route through a residential
+  // proxy; site-specific selectors/parsing are the caller's concern.
   const run = await client.run({
     start_url: url,
+    use_proxy: true,
+    proxy_country: "RU",
     steps: [
       { action: "wait_for", selector: "[data-widget=webPrice]", timeout_s: 15 },
       { action: "extract", name: "title", selector: "h1", kind: "text" },

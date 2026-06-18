@@ -49,8 +49,6 @@ class Settings:
     jitter_s: float = float(os.environ.get("JITTER_S", "1.5"))
     # Default headless mode (Ozon requires headful -> False).
     default_headless: bool = os.environ.get("HEADLESS", "0") == "1"
-    # Ozon price cache TTL.
-    price_cache_ttl_s: float = float(os.environ.get("PRICE_CACHE_TTL_S", "900"))
     # Browser language / locale (drives navigator.language(s) + Intl).
     lang: str = os.environ.get("BROWSER_LANG", "ru-RU")
     accept_lang: str = os.environ.get("ACCEPT_LANG", "ru-RU,ru")
@@ -63,11 +61,6 @@ class Settings:
     warmup_settle_s: float = float(os.environ.get("WARMUP_SETTLE_S", "4.0"))
     # Per-run hard timeout.
     run_timeout_s: float = float(os.environ.get("RUN_TIMEOUT_S", "90"))
-    # Max attempts for an Ozon scrape behind an Asocks proxy. On an antibot wall
-    # (IP block or captcha) the service rotates to a fresh proxy session (a new
-    # exit IP) and retries, up to this many times. 1 disables rotation/retry.
-    # Each extra attempt spends proxy traffic, so keep it low.
-    scrape_max_attempts: int = int(os.environ.get("SCRAPE_MAX_ATTEMPTS", "2"))
 
     # -- Asocks proxy provider (https://api.asocks.com/v2) ------------------ #
     # API key. When set, callers can opt a request into a residential proxy

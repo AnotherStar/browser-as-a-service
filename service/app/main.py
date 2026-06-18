@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -21,17 +20,11 @@ from .events import bus
 from .models import (
     HealthResponse,
     NavigateStep,
-    OzonPriceRequest,
-    OzonPriceResponse,
     Proxy,
     RunRequest,
     RunResponse,
 )
-from .ozon import detect_antibot, extract_ozon_price
 from .settings import settings
-
-# Simple in-memory Ozon price cache: url -> (timestamp, OzonPriceResponse)
-_price_cache: dict[str, tuple[float, OzonPriceResponse]] = {}
 
 
 @asynccontextmanager
@@ -46,8 +39,10 @@ app = FastAPI(
     title="browser-as-a-service",
     version="0.1.0",
     description=(
-        "Command-driven browser automation over nodriver (undetected Chrome). "
-        "Run typed scenarios against bot-protected sites such as Ozon."
+        "Generic browser automation over zendriver (undetected Chrome) with "
+        "fingerprint masking and Asocks residential proxies. Run typed scenarios "
+        "against bot-protected sites and get the DOM back; site-specific parsing "
+        "and retry logic live in the caller."
     ),
     lifespan=lifespan,
 )
@@ -74,15 +69,6 @@ async def _resolve_proxy(req, who: str, fresh: bool = False) -> Optional[Proxy]:
         )
         return proxy
     return None
-
-
-def _scrape_attempts(req) -> int:
-    """How many proxy-rotating attempts to make. Rotation only helps when we
-    pull a re-rollable Asocks proxy, so an explicit `proxy` or a direct
-    connection gets a single attempt."""
-    if req.proxy is None and req.use_proxy:
-        return max(1, settings.scrape_max_attempts)
-    return 1
 
 
 @app.middleware("http")
@@ -155,7 +141,7 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
 
     started = time.monotonic()
     try:
-        proxy = await _resolve_proxy(req, who)
+        proxy = await _resolve_proxy(req, who, fresh=req.rotate_proxy)
         async with manager.acquire(proxy, req.headless) as (browser, tab):
             await apply_cookies(browser, req.cookies, first_url)
             data, step_results = await asyncio.wait_for(
@@ -198,114 +184,3 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
         data=data,
         steps=step_results,
     )
-
-
-@app.post("/ozon/price", response_model=OzonPriceResponse, tags=["ozon"])
-async def ozon_price(req: OzonPriceRequest, request: Request) -> OzonPriceResponse:
-    """Convenience endpoint: open an Ozon product page and return its price."""
-    if settings.chrome_path is None:
-        raise HTTPException(500, "No Chrome executable found; set CHROME_PATH.")
-
-    who = _client_host(request)
-    now = time.monotonic()
-    if req.use_cache:
-        hit = _price_cache.get(req.url)
-        if hit and (now - hit[0]) < settings.price_cache_ttl_s:
-            cached = hit[1].model_copy(update={"cached": True})
-            bus.emit("success", "scrape", who, "ozon price (cache)", req.url)
-            return cached
-
-    bus.emit("info", "scrape", who, "ozon price", req.url)
-    started = time.monotonic()
-    attempts = _scrape_attempts(req)
-    parsed: dict = {}
-    block: Optional[str] = None
-    try:
-        for attempt in range(attempts):
-            proxy = await _resolve_proxy(req, who, fresh=attempt > 0)
-            async with manager.acquire(proxy, req.headless) as (browser, tab):
-                await apply_cookies(browser, req.cookies, req.url)
-                await asyncio.wait_for(
-                    _open_and_settle(tab, req.url), timeout=settings.run_timeout_s
-                )
-                block = await detect_antibot(tab)
-                parsed = await extract_ozon_price(tab)
-            got_price = (
-                parsed.get("price_value") is not None
-                or parsed.get("price_text") is not None
-            )
-            if block is None and got_price:
-                break
-            if attempt < attempts - 1:
-                bus.emit(
-                    "warn", "scrape", who, "ozon antibot, rotating proxy",
-                    f"{block or 'no price'} · attempt {attempt + 1}/{attempts}",
-                )
-    except asyncio.TimeoutError:
-        elapsed = int((time.monotonic() - started) * 1000)
-        bus.emit("error", "scrape", who, "ozon price failed", f"timeout · {elapsed}ms")
-        return OzonPriceResponse(
-            ok=False, url=req.url,
-            elapsed_ms=elapsed,
-            error=f"exceeded {settings.run_timeout_s}s timeout",
-        )
-    except Exception as exc:  # noqa: BLE001
-        elapsed = int((time.monotonic() - started) * 1000)
-        bus.emit("error", "scrape", who, "ozon price failed", f"{exc} · {elapsed}ms")
-        return OzonPriceResponse(
-            ok=False, url=req.url,
-            elapsed_ms=elapsed,
-            error=str(exc),
-        )
-
-    ok = parsed.get("price_value") is not None or parsed.get("price_text") is not None
-    error = None
-    if not ok:
-        if block == "ip_block":
-            error = "ozon antibot: proxy exit IP rejected as VPN/proxy"
-        elif block == "captcha":
-            error = "ozon antibot: captcha challenge shown"
-    resp = OzonPriceResponse(
-        ok=bool(ok),
-        url=req.url,
-        title=parsed.get("title"),
-        price_text=parsed.get("price_text"),
-        price_value=parsed.get("price_value"),
-        card_price_value=parsed.get("card_price_value"),
-        cached=False,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        elapsed_ms=int((time.monotonic() - started) * 1000),
-        error=error,
-    )
-    if ok:
-        _price_cache[req.url] = (now, resp)
-    bus.emit(
-        "success" if ok else "warn", "scrape", who,
-        "ozon price done" if ok else "ozon price blocked",
-        (f"{resp.price_value if resp.price_value is not None else resp.price_text or '?'}"
-         if ok else (error or "no price"))
-        + f" · {resp.elapsed_ms}ms",
-    )
-    return resp
-
-
-async def _open_and_settle(tab, url: str) -> None:
-    # Warm up the session: a cold, direct hit to a product page triggers
-    # Ozon's antibot. Visiting the homepage first establishes the antibot
-    # cookies, after which the product page loads cleanly.
-    title = ""
-    await tab.get(url)
-    try:
-        await tab.select("[data-widget=webPrice]", timeout=8)
-        return
-    except Exception:
-        title = str(await tab.evaluate("document.title", return_by_value=True) or "")
-
-    if "antibot" in title.lower() or "captcha" in title.lower():
-        await tab.get("https://www.ozon.ru/")
-        await tab.sleep(4)
-        await tab.get(url)
-    try:
-        await tab.select("[data-widget=webPrice]", timeout=12)
-    except Exception:
-        await tab.sleep(4)
