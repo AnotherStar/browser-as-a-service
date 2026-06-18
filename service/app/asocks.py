@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import re
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -34,6 +37,20 @@ from .socks_bridge import manager as bridge_manager
 
 class AsocksError(RuntimeError):
     """Any failure talking to the Asocks API or resolving a port."""
+
+
+# Asocks logins end with a sticky-session token (`...-session-<hex>`). Minting a
+# new token routes the next connection through a different exit IP — the lever we
+# use to rotate away from an IP that a target site has blocked.
+_SESSION_RE = re.compile(r"(session-)[0-9a-fA-F]+$")
+
+
+def _rotate_login(login: Optional[str]) -> Optional[str]:
+    """Return `login` with a fresh sticky-session token so Asocks hands out a
+    different exit IP. No-op if the login has no recognizable session token."""
+    if not login or not _SESSION_RE.search(login):
+        return login
+    return _SESSION_RE.sub("session-" + secrets.token_hex(8), login)
 
 
 def _num(value: Any) -> Optional[float]:
@@ -171,45 +188,56 @@ class AsocksClient:
         return str(port.get("countryCode") or "").upper() == country.upper()
 
     def _pick(self, ports: list[dict], country: Optional[str]) -> Optional[dict]:
-        """Choose a port: matching country, preferring active status, newest
-        first (highest id) so a freshly created port wins."""
+        """Choose a port matching the country, preferring active ones. Picks at
+        random within that set so we don't keep hitting the same (possibly
+        blocked) port across requests."""
         cands = [p for p in ports if self._matches_country(p, country)]
         if not cands:
             return None
         active = [p for p in cands if str(p.get("status")) in ("1", "active")]
-        return max(active or cands, key=lambda p: p.get("id") or 0)
+        return random.choice(active or cands)
 
     @staticmethod
-    def _to_upstream(port: dict) -> Proxy:
+    def _to_upstream(port: dict, rotate: bool = False) -> Proxy:
         """The raw Asocks proxy: SOCKS5 with user/pass auth (see asocks-api
-        notes). Not usable by Chrome directly — wrapped by the local bridge."""
+        notes). Not usable by Chrome directly — wrapped by the local bridge.
+        With `rotate`, the login's session token is re-rolled for a new exit IP."""
         raw = str(port.get("proxy") or "")
         host, sep, port_no = raw.rpartition(":")
         if not sep or not host or not port_no:
             raise AsocksError(f"unexpected proxy format from asocks: {raw!r}")
+        login = port.get("login")
+        if rotate:
+            login = _rotate_login(login)
         return Proxy(
             server=f"socks5://{host}:{port_no}",
-            username=port.get("login"),
+            username=login,
             password=port.get("password"),
         )
 
     # -- public ------------------------------------------------------------ #
 
-    async def acquire(self, country: Optional[str] = None) -> Proxy:
+    async def acquire(
+        self, country: Optional[str] = None, fresh: bool = False
+    ) -> Proxy:
         """Return a ready-to-use Proxy for `country` (None = any available).
 
         Reuses a cached/existing port when possible; otherwise creates one and
-        waits for it to come up. Raises AsocksError on misconfiguration or API
-        failure."""
+        waits for it to come up. With `fresh=True` the cache is bypassed and the
+        session token re-rolled, yielding a new exit IP — used to rotate away
+        from an IP a target site has blocked. Raises AsocksError on
+        misconfiguration or API failure."""
         key = (country or "").strip().upper()
-        cached = self._fresh(key)
-        if cached is not None:
-            return cached
-
-        async with self._lock:
-            cached = self._fresh(key)  # re-check: another task may have filled it
+        if not fresh:
+            cached = self._fresh(key)
             if cached is not None:
                 return cached
+
+        async with self._lock:
+            if not fresh:
+                cached = self._fresh(key)  # re-check: another task may have filled it
+                if cached is not None:
+                    return cached
 
             ports = await self.list_ports()
             port = self._pick(ports, country)
@@ -223,13 +251,15 @@ class AsocksClient:
                 await self.create_port(country, name="browser-as-a-service")
                 port = await self._await_new_port(country)
 
-            upstream = self._to_upstream(port)
+            upstream = self._to_upstream(port, rotate=fresh)
             # Chrome can't authenticate SOCKS5, so route it through a local
             # no-auth bridge that does the upstream user/pass handshake.
             local = await bridge_manager.local_proxy_for(upstream)
-            self._cache[key] = (time.monotonic(), local)
+            if not fresh:
+                self._cache[key] = (time.monotonic(), local)
             bus.emit(
-                "success", "system", "asocks", "proxy ready",
+                "success", "system", "asocks",
+                "proxy rotated" if fresh else "proxy ready",
                 f"{port.get('countryCode') or '?'} · {upstream.server} "
                 f"via {local.server}",
             )

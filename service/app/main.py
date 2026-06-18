@@ -28,7 +28,7 @@ from .models import (
     RunRequest,
     RunResponse,
 )
-from .ozon import extract_ozon_price
+from .ozon import detect_antibot, extract_ozon_price
 from .settings import settings
 
 # Simple in-memory Ozon price cache: url -> (timestamp, OzonPriceResponse)
@@ -60,18 +60,31 @@ def _client_host(request: Request) -> str:
     return request.client.host if request.client else "?"
 
 
-async def _resolve_proxy(req, who: str) -> Optional[Proxy]:
+async def _resolve_proxy(req, who: str, fresh: bool = False) -> Optional[Proxy]:
     """Pick the proxy for a request: an explicit `proxy` always wins; otherwise
     an Asocks residential proxy when the caller opts in with `use_proxy`.
-    Returns None for a direct connection. May raise AsocksError, surfaced to
-    the caller as a failed run."""
+    `fresh` rotates to a new Asocks exit IP (used when retrying past an antibot
+    wall). Returns None for a direct connection. May raise AsocksError, surfaced
+    to the caller as a failed run."""
     if req.proxy is not None:
         return req.proxy
     if req.use_proxy:
-        proxy = await asocks_client.acquire(req.proxy_country)
-        bus.emit("info", "scrape", who, "asocks proxy", proxy.server)
+        proxy = await asocks_client.acquire(req.proxy_country, fresh=fresh)
+        bus.emit(
+            "info", "scrape", who,
+            "asocks proxy (rotated)" if fresh else "asocks proxy", proxy.server,
+        )
         return proxy
     return None
+
+
+def _scrape_attempts(req) -> int:
+    """How many proxy-rotating attempts to make. Rotation only helps when we
+    pull a re-rollable Asocks proxy, so an explicit `proxy` or a direct
+    connection gets a single attempt."""
+    if req.proxy is None and req.use_proxy:
+        return max(1, settings.scrape_max_attempts)
+    return 1
 
 
 @app.middleware("http")
@@ -206,14 +219,30 @@ async def ozon_price(req: OzonPriceRequest, request: Request) -> OzonPriceRespon
 
     bus.emit("info", "scrape", who, "ozon price", req.url)
     started = time.monotonic()
+    attempts = _scrape_attempts(req)
+    parsed: dict = {}
+    block: Optional[str] = None
     try:
-        proxy = await _resolve_proxy(req, who)
-        async with manager.acquire(proxy, req.headless) as (browser, tab):
-            await apply_cookies(browser, req.cookies, req.url)
-            await asyncio.wait_for(
-                _open_and_settle(tab, req.url), timeout=settings.run_timeout_s
+        for attempt in range(attempts):
+            proxy = await _resolve_proxy(req, who, fresh=attempt > 0)
+            async with manager.acquire(proxy, req.headless) as (browser, tab):
+                await apply_cookies(browser, req.cookies, req.url)
+                await asyncio.wait_for(
+                    _open_and_settle(tab, req.url), timeout=settings.run_timeout_s
+                )
+                block = await detect_antibot(tab)
+                parsed = await extract_ozon_price(tab)
+            got_price = (
+                parsed.get("price_value") is not None
+                or parsed.get("price_text") is not None
             )
-            parsed = await extract_ozon_price(tab)
+            if block is None and got_price:
+                break
+            if attempt < attempts - 1:
+                bus.emit(
+                    "warn", "scrape", who, "ozon antibot, rotating proxy",
+                    f"{block or 'no price'} · attempt {attempt + 1}/{attempts}",
+                )
     except asyncio.TimeoutError:
         elapsed = int((time.monotonic() - started) * 1000)
         bus.emit("error", "scrape", who, "ozon price failed", f"timeout · {elapsed}ms")
@@ -232,6 +261,12 @@ async def ozon_price(req: OzonPriceRequest, request: Request) -> OzonPriceRespon
         )
 
     ok = parsed.get("price_value") is not None or parsed.get("price_text") is not None
+    error = None
+    if not ok:
+        if block == "ip_block":
+            error = "ozon antibot: proxy exit IP rejected as VPN/proxy"
+        elif block == "captcha":
+            error = "ozon antibot: captcha challenge shown"
     resp = OzonPriceResponse(
         ok=bool(ok),
         url=req.url,
@@ -242,14 +277,16 @@ async def ozon_price(req: OzonPriceRequest, request: Request) -> OzonPriceRespon
         cached=False,
         fetched_at=datetime.now(timezone.utc).isoformat(),
         elapsed_ms=int((time.monotonic() - started) * 1000),
+        error=error,
     )
     if ok:
         _price_cache[req.url] = (now, resp)
     bus.emit(
         "success" if ok else "warn", "scrape", who,
-        "ozon price done" if ok else "ozon price empty",
-        f"{resp.price_value if resp.price_value is not None else resp.price_text or '?'}"
-        f" · {resp.elapsed_ms}ms",
+        "ozon price done" if ok else "ozon price blocked",
+        (f"{resp.price_value if resp.price_value is not None else resp.price_text or '?'}"
+         if ok else (error or "no price"))
+        + f" · {resp.elapsed_ms}ms",
     )
     return resp
 

@@ -22,6 +22,44 @@ _PRICE_JS = r"""
 """
 
 
+# Ozon antibot walls (see README "Защита Ozon"). The IP-reputation block
+# ("Похоже, нет соединения / Выключите VPN") means the exit IP is flagged as a
+# proxy/VPN; the captcha means the IP passed reputation but a challenge is shown.
+# Either way there's no price to read, so the caller can rotate the proxy.
+_IP_BLOCK_MARKERS = ("нет соединения", "выключите vpn")
+_CAPTCHA_MARKERS = (
+    "antibot",
+    "captcha",
+    "not a bot",
+    "slide the slider",
+    "доступ ограничен",
+    "подтвердите, что вы не робот",
+)
+
+
+async def detect_antibot(tab) -> str | None:
+    """Classify the current page as an Ozon antibot wall.
+
+    Returns ``"ip_block"`` (proxy/VPN exit IP rejected), ``"captcha"`` (IP
+    accepted but a challenge is shown), or ``None`` (looks like a normal page)."""
+    try:
+        blob = str(
+            await tab.evaluate(
+                "(document.title + '\\n' + (document.body ? "
+                "document.body.innerText.slice(0, 400) : '')).toLowerCase()",
+                return_by_value=True,
+            )
+            or ""
+        )
+    except Exception:
+        return None
+    if any(m in blob for m in _IP_BLOCK_MARKERS):
+        return "ip_block"
+    if any(m in blob for m in _CAPTCHA_MARKERS):
+        return "captcha"
+    return None
+
+
 def _parse_int(token: str) -> int | None:
     digits = re.sub(r"[^\d]", "", token)
     return int(digits) if digits else None
