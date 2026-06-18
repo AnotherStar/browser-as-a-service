@@ -1,5 +1,5 @@
 /**
- * Typesafe client for the nodriver scraping service.
+ * Typesafe client for the browser-as-a-service scraping API.
  *
  * The heavy lifting (zod schemas + endpoint wiring) lives in the generated
  * `generated.ts`, which is produced from the service's OpenAPI document via

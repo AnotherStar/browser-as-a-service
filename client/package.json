@@ -1,7 +1,7 @@
 {
-  "name": "nodriver-scrape-client",
+  "name": "browser-as-a-service-client",
   "version": "0.1.0",
-  "description": "Typesafe (zod) client for the nodriver scraping service, generated from OpenAPI.",
+  "description": "Typesafe (zod) client for the browser-as-a-service scraping API, generated from OpenAPI.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

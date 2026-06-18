@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "nodriver scraping service",
+    "title": "browser-as-a-service",
     "description": "Command-driven browser automation over nodriver (undetected Chrome). Run typed scenarios against bot-protected sites such as Ozon.",
     "version": "0.1.0"
   },

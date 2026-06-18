@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="nodriver scraping service",
+    title="browser-as-a-service",
     version="0.1.0",
     description=(
         "Command-driven browser automation over nodriver (undetected Chrome). "

@@ -1,4 +1,4 @@
-# nodriver-scrape-client
+# browser-as-a-service-client
 
 Типобезопасный (zod) клиент для сервиса скрейпинга, сгенерированный из его
 OpenAPI-документа. Подробности и архитектура — в [корневом README](../README.md).

@@ -1,4 +1,4 @@
-# nodriver-scrape
+# browser-as-a-service
 
 Командно-управляемый сервис веб-скрейпинга поверх [zendriver](https://github.com/cdpdriver/zendriver)
 (поддерживаемый форк nodriver — undetected Chrome через CDP, наследник
@@ -54,7 +54,7 @@ npm run example:price -- "https://www.ozon.ru/product/...."
 
 Использование в коде:
 ```ts
-import { createScrapeClient } from "nodriver-scrape-client";
+import { createScrapeClient } from "browser-as-a-service-client";
 
 const client = createScrapeClient("http://127.0.0.1:8077");
 
