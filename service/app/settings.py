@@ -41,8 +41,10 @@ def _detect_chrome() -> str | None:
 
 class Settings:
     chrome_path: str | None = _detect_chrome()
-    # Max concurrent browser operations. Anti-ban favours a low number.
-    max_concurrency: int = int(os.environ.get("MAX_CONCURRENCY", "1"))
+    # Max concurrent browser operations. With warm proxy sessions each holds its
+    # own browser + exit IP, so several can run in parallel safely; anti-ban is
+    # enforced per-session (per-IP) instead. A pool of a few sessions needs room.
+    max_concurrency: int = int(os.environ.get("MAX_CONCURRENCY", "6"))
     # Minimum seconds between consecutive page loads (politeness / anti-ban).
     min_interval_s: float = float(os.environ.get("MIN_INTERVAL_S", "2.0"))
     # Extra random jitter (0..jitter) added to the interval.
@@ -61,6 +63,20 @@ class Settings:
     warmup_settle_s: float = float(os.environ.get("WARMUP_SETTLE_S", "4.0"))
     # Per-run hard timeout.
     run_timeout_s: float = float(os.environ.get("RUN_TIMEOUT_S", "90"))
+
+    # -- warm proxy sessions ----------------------------------------------- #
+    # Country for auto-resolved Asocks proxies when a request/session omits one.
+    default_proxy_country: str = os.environ.get("DEFAULT_PROXY_COUNTRY", "RU")
+    # A warm session is evicted after this many seconds with no run (frees the
+    # browser + exit IP). The caller re-warms on demand.
+    session_idle_ttl_s: float = float(os.environ.get("SESSION_IDLE_TTL_S", "600"))
+    # Hard cap on a session's lifetime regardless of activity, so a long-lived
+    # session doesn't keep riding one increasingly-suspicious exit IP.
+    session_max_age_s: float = float(os.environ.get("SESSION_MAX_AGE_S", "3600"))
+    # How often the reaper checks for idle/aged-out sessions.
+    session_reap_interval_s: float = float(
+        os.environ.get("SESSION_REAP_INTERVAL_S", "60")
+    )
 
     # -- Asocks proxy provider (https://api.asocks.com/v2) ------------------ #
     # API key. When set, callers can opt a request into a residential proxy

@@ -42,6 +42,7 @@ async def admin_status() -> JSONResponse:
             "chrome_path": settings.chrome_path,
             "chrome_detected": settings.chrome_path is not None,
             "browser_alive": manager.is_alive(),
+            "sessions": manager.session_count(),
             "max_concurrency": settings.max_concurrency,
             "headless": settings.default_headless,
             "min_interval_s": settings.min_interval_s,
@@ -284,6 +285,7 @@ _ADMIN_HTML = """<!doctype html>
                       humanBytes(asocksInfo.traffic_bytes));
       }
     }
+    html += badge(s.sessions ? 'ok' : '', 'сессии', s.sessions || 0);
     html += badge('', 'concurrency', s.max_concurrency);
     html += badge(s.active_requests ? 'warn' : '', 'в работе', s.active_requests);
     html += badge('', 'запросов', s.total_requests);

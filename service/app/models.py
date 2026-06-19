@@ -175,24 +175,18 @@ class RunRequest(BaseModel):
         description="Convenience: navigate here before running steps "
         "(equivalent to a leading navigate step).",
     )
-    proxy: Optional[Proxy] = Field(None, description="Optional proxy for this run.")
-    use_proxy: bool = Field(
-        False,
-        description="Route this run through an Asocks residential proxy "
-        "(https://asocks.com). Ignored when an explicit `proxy` is given. "
-        "Requires ASOCKS_API_KEY on the server.",
-    )
-    proxy_country: Optional[str] = Field(
+    session_id: Optional[str] = Field(
         None,
-        description="ISO country code for the Asocks proxy, e.g. 'RU'. "
-        "Omit to use any available port. Only used when `use_proxy` is true.",
-        examples=["RU"],
+        description="Reuse a warm session created via POST /sessions (its "
+        "already-launched, proxied, anti-bot-warmed browser). Skips the per-run "
+        "browser launch + warmup + teardown — the big latency win for batches. "
+        "Unknown/expired id -> HTTP 404 (caller should re-create and retry). "
+        "Omit to run one-off (a fresh proxied browser is spun up just for it).",
     )
-    rotate_proxy: bool = Field(
-        False,
-        description="Bypass the proxy cache and rotate to a fresh Asocks exit "
-        "IP. Set true when retrying past an antibot wall so the retry uses a new "
-        "IP. Only used when `use_proxy` is true.",
+    proxy: Optional[Proxy] = Field(
+        None,
+        description="Explicit proxy for a one-off run (ignored when session_id "
+        "is set). Omit to auto-resolve an Asocks residential proxy.",
     )
     cookies: Optional[list[Cookie]] = Field(
         None,
@@ -257,3 +251,48 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     browser_ready: bool
     chrome_path: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- #
+# Warm sessions                                                                #
+# --------------------------------------------------------------------------- #
+
+
+class SessionCreateRequest(BaseModel):
+    """Create a warm, proxied browser kept alive for reuse across runs."""
+
+    label: Optional[str] = Field(
+        None,
+        description="Free-form tag for the caller's bookkeeping, e.g. the "
+        "marketplace ('OZON'/'WB'/'YM'). Echoed back in session info; does not "
+        "affect behaviour.",
+        examples=["OZON"],
+    )
+    proxy_country: Optional[str] = Field(
+        None,
+        description="ISO country code for the Asocks exit IP. Omit to use the "
+        "server default.",
+        examples=["RU"],
+    )
+    warmup: bool = Field(
+        True,
+        description="Visit the warmup URL once after launch to prime anti-bot "
+        "cookies before the first real navigation.",
+    )
+
+
+class SessionInfo(BaseModel):
+    id: str
+    label: Optional[str] = None
+    exit_server: Optional[str] = Field(
+        None, description="The proxy gateway host:port backing this session."
+    )
+    created_ts: float = Field(..., description="Unix epoch seconds at creation.")
+    last_used_ts: float = Field(..., description="Unix epoch seconds of last run.")
+    age_s: int = Field(..., description="Seconds since creation.")
+    idle_s: int = Field(..., description="Seconds since the last run.")
+    runs: int = Field(..., description="Runs served by this session so far.")
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionInfo] = Field(default_factory=list)
