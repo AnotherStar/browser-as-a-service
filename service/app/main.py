@@ -141,7 +141,14 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
 
     started = time.monotonic()
     timings: dict[str, int] = {}
-    try:
+    # Ceiling on the WHOLE request (acquire + proxy-auth + steps), not just steps.
+    # A run that hangs while launching/warming a browser or authing a slow proxy
+    # is outside the steps timeout and would hold its concurrency slot forever —
+    # that's what wedges the service. Must exceed the steps timeout so a steps
+    # timeout still surfaces as one rather than being masked by this ceiling.
+    overall_timeout = max(settings.request_timeout_s, settings.run_timeout_s + 10)
+
+    async def _acquire_and_run():
         # A warm session reuses an already-launched, proxied, warmed browser
         # (acquire_ms drops to ~throttle); a one-off spins up a fresh proxied
         # browser just for this run.
@@ -168,6 +175,14 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
                 final_url = await tab.evaluate("location.href", return_by_value=True)
             except Exception:
                 pass
+            return data, step_results, final_url
+
+    try:
+        # Cancelling on timeout unwinds the context managers (semaphore + session
+        # lock + tab), so a hung run frees its slot instead of leaking it.
+        data, step_results, final_url = await asyncio.wait_for(
+            _acquire_and_run(), timeout=overall_timeout
+        )
     except SessionNotFound:
         bus.emit(
             "warn", "scrape", who, "run rejected",
@@ -178,12 +193,14 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
             detail=f"session not found or expired: {req.session_id}",
         )
     except asyncio.TimeoutError:
+        # Either the steps timeout or the whole-request ceiling fired. Both unwind
+        # the context managers above, so the concurrency slot is already released.
         elapsed = int((time.monotonic() - started) * 1000)
         bus.emit("error", "scrape", who, "run failed", f"timeout · {elapsed}ms")
         return RunResponse(
             ok=False,
             elapsed_ms=elapsed,
-            error=f"run exceeded {settings.run_timeout_s}s timeout",
+            error=f"run exceeded timeout ({int(settings.run_timeout_s)}s steps / {int(overall_timeout)}s total)",
         )
     except Exception as exc:  # noqa: BLE001
         elapsed = int((time.monotonic() - started) * 1000)

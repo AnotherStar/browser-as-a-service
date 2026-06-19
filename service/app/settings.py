@@ -61,8 +61,15 @@ class Settings:
     # session cookies before any "cold" product hit. Empty disables it.
     warmup_url: str = os.environ.get("WARMUP_URL", "https://www.ozon.ru/")
     warmup_settle_s: float = float(os.environ.get("WARMUP_SETTLE_S", "4.0"))
-    # Per-run hard timeout.
+    # Per-run hard timeout — wraps only the scenario steps.
     run_timeout_s: float = float(os.environ.get("RUN_TIMEOUT_S", "90"))
+    # Hard timeout for the WHOLE request: proxy resolve + browser/session acquire
+    # + proxy-auth + steps. The steps timeout above does NOT cover acquire, so a
+    # run that hangs while launching/warming a browser or authing a slow proxy
+    # would otherwise hold a concurrency slot forever and wedge the service. This
+    # ceiling makes such a run give up and free its slot. Must exceed
+    # run_timeout_s; enforced at use site.
+    request_timeout_s: float = float(os.environ.get("REQUEST_TIMEOUT_S", "150"))
 
     # -- warm proxy sessions ----------------------------------------------- #
     # Country for auto-resolved Asocks proxies when a request/session omits one.
