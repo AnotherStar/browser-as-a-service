@@ -41,10 +41,12 @@ def _detect_chrome() -> str | None:
 
 class Settings:
     chrome_path: str | None = _detect_chrome()
-    # Max concurrent browser operations. With warm proxy sessions each holds its
-    # own browser + exit IP, so several can run in parallel safely; anti-ban is
-    # enforced per-session (per-IP) instead. A pool of a few sessions needs room.
-    max_concurrency: int = int(os.environ.get("MAX_CONCURRENCY", "6"))
+    # Max concurrent browser operations. Each warm session holds its own headful
+    # Chrome + exit IP; anti-ban is per-session (per-IP). The hard limit here is
+    # RAM, not bans: headful Chrome is ~0.3-0.5GB each, and on a 3.9GB box >3
+    # at once OOM-kills Chrome (and the service). Default 3 fits; raise only with
+    # more RAM. Keep in step with the callers' sessions-per-marketplace.
+    max_concurrency: int = int(os.environ.get("MAX_CONCURRENCY", "3"))
     # Minimum seconds between consecutive page loads (politeness / anti-ban).
     min_interval_s: float = float(os.environ.get("MIN_INTERVAL_S", "2.0"))
     # Extra random jitter (0..jitter) added to the interval.
