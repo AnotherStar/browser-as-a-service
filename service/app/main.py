@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 
 from .admin import router as admin_router
-from .asocks import client as asocks_client
+from .asocks import AsocksError, client as asocks_client, resolve_proxy_type
 from .browser import SessionNotFound, apply_cookies, manager
 from .engine import run_steps
 from .events import bus
@@ -225,7 +225,13 @@ async def create_session(req: SessionCreateRequest, request: Request) -> Session
     who = _client_host(request)
     started = time.monotonic()
     try:
-        session = await manager.create_session(req.label, req.proxy_country, req.warmup)
+        proxy_type_id = resolve_proxy_type(req.proxy_type)
+    except AsocksError as exc:
+        raise HTTPException(400, str(exc))
+    try:
+        session = await manager.create_session(
+            req.label, req.proxy_country, req.warmup, proxy_type_id
+        )
     except Exception as exc:  # noqa: BLE001
         bus.emit("error", "scrape", who, "session create failed", str(exc))
         raise HTTPException(502, f"session create failed: {exc}")

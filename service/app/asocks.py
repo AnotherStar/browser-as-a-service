@@ -43,6 +43,30 @@ class AsocksError(RuntimeError):
 # use to rotate away from an IP that a target site has blocked.
 _SESSION_RE = re.compile(r"(session-)[0-9a-fA-F]+$")
 
+# Asocks `proxy_type_id` by the dashboard icons (NOT support's verbal mapping):
+# 1=residential, 2=mixed (mobile+resid+corp), 3=mobile (4G), 4=corporate. Some
+# sites need a specific type — e.g. Yandex.Market captchas every Asocks IP except
+# real mobile 4G, so the caller asks for "mobile" there.
+PROXY_TYPE_IDS: dict[str, int] = {
+    "residential": 1,
+    "mixed": 2,
+    "mobile": 3,
+    "corporate": 4,
+}
+
+
+def resolve_proxy_type(name: Optional[str]) -> Optional[int]:
+    """Map a proxy-type name ('mobile'/'mixed'/…) to its Asocks proxy_type_id.
+    None/empty -> None (use the server default). Unknown name -> AsocksError."""
+    if not name:
+        return None
+    key = name.strip().lower()
+    if key not in PROXY_TYPE_IDS:
+        raise AsocksError(
+            f"unknown proxy_type {name!r}; expected one of {sorted(PROXY_TYPE_IDS)}"
+        )
+    return PROXY_TYPE_IDS[key]
+
 
 def _rotate_login(login: Optional[str]) -> Optional[str]:
     """Return `login` with a fresh sticky-session token so Asocks hands out a
@@ -164,7 +188,10 @@ class AsocksClient:
         return (data.get("message") or {}).get("proxies") or []
 
     async def create_port(
-        self, country_code: str, name: Optional[str] = None
+        self,
+        country_code: str,
+        name: Optional[str] = None,
+        proxy_type_id: Optional[int] = None,
     ) -> None:
         # type_id / proxy_type_id / server_port_type_id are required by the API
         # (a missing one is a 422). Pin the city (Moscow): no-city IPs get
@@ -172,7 +199,9 @@ class AsocksClient:
         body: dict[str, Any] = {
             "country_code": country_code,
             "type_id": settings.asocks_type_id,
-            "proxy_type_id": settings.asocks_proxy_type_id,
+            "proxy_type_id": proxy_type_id
+            if proxy_type_id is not None
+            else settings.asocks_proxy_type_id,
             "server_port_type_id": settings.asocks_server_port_type_id,
         }
         if settings.asocks_state:
@@ -191,11 +220,39 @@ class AsocksClient:
             return True
         return str(port.get("countryCode") or "").upper() == country.upper()
 
-    def _pick(self, ports: list[dict], country: Optional[str]) -> Optional[dict]:
-        """Choose a port matching the country, preferring active ones. Picks at
-        random within that set so we don't keep hitting the same (possibly
-        blocked) port across requests."""
-        cands = [p for p in ports if self._matches_country(p, country)]
+    @staticmethod
+    def _port_name(type_id: int) -> str:
+        """Name tag we stamp on auto-created ports so we can recognise a port's
+        proxy type on reuse, even if the `proxy/ports` listing doesn't echo it."""
+        return f"baas-pt{type_id}"
+
+    @classmethod
+    def _matches_type(cls, port: dict, type_id: Optional[int]) -> bool:
+        """Whether `port` is of the requested proxy type. None -> any type.
+        Prefers an explicit type field from the API; falls back to the name tag
+        we stamped at creation (the listing reliably echoes `name`)."""
+        if type_id is None:
+            return True
+        for k in ("proxy_type_id", "proxyTypeId", "type_id", "proxyType"):
+            v = port.get(k)
+            if v is not None:
+                try:
+                    return int(v) == type_id
+                except (TypeError, ValueError):
+                    pass
+        return str(port.get("name") or "") == cls._port_name(type_id)
+
+    def _pick(
+        self, ports: list[dict], country: Optional[str], type_id: Optional[int] = None
+    ) -> Optional[dict]:
+        """Choose a port matching the country (and proxy type, when requested),
+        preferring active ones. Picks at random within that set so we don't keep
+        hitting the same (possibly blocked) port across requests."""
+        cands = [
+            p
+            for p in ports
+            if self._matches_country(p, country) and self._matches_type(p, type_id)
+        ]
         if not cands:
             return None
         active = [p for p in cands if str(p.get("status")) in ("1", "active")]
@@ -224,16 +281,25 @@ class AsocksClient:
     # -- public ------------------------------------------------------------ #
 
     async def acquire(
-        self, country: Optional[str] = None, fresh: bool = False
+        self,
+        country: Optional[str] = None,
+        fresh: bool = False,
+        proxy_type_id: Optional[int] = None,
     ) -> Proxy:
         """Return a ready-to-use Proxy for `country` (None = any available).
 
         Reuses a cached/existing port when possible; otherwise creates one and
         waits for it to come up. With `fresh=True` the cache is bypassed and the
         session token re-rolled, yielding a new exit IP — used to rotate away
-        from an IP a target site has blocked. Raises AsocksError on
-        misconfiguration or API failure."""
-        key = (country or "").strip().upper()
+        from an IP a target site has blocked. `proxy_type_id` (e.g. 3 = mobile
+        for Yandex.Market) restricts selection/creation to that Asocks type;
+        None keeps the server default and reuses a port of any type. Raises
+        AsocksError on misconfiguration or API failure."""
+        # The default path (no specific type) reuses ports of any type, incl.
+        # ones created by hand in the dashboard. A typed request filters strictly
+        # and caches separately so a mobile request never gets a mixed IP.
+        key = f"{(country or '').strip().upper()}|{proxy_type_id if proxy_type_id is not None else ''}"
+        pick_type = proxy_type_id  # None -> _pick/_await ignore type
         if not fresh:
             cached = self._fresh(key)
             if cached is not None:
@@ -246,16 +312,24 @@ class AsocksClient:
                     return cached
 
             ports = await self.list_ports()
-            port = self._pick(ports, country)
+            port = self._pick(ports, country, pick_type)
             if port is None:
                 if not country:
                     raise AsocksError(
                         "no asocks ports available; pass proxy_country to "
                         "create one (or create a port in the dashboard)"
                     )
-                bus.emit("info", "system", "asocks", "creating proxy port", country)
-                await self.create_port(country, name="browser-as-a-service")
-                port = await self._await_new_port(country)
+                name = (
+                    self._port_name(proxy_type_id)
+                    if proxy_type_id is not None
+                    else "browser-as-a-service"
+                )
+                bus.emit(
+                    "info", "system", "asocks", "creating proxy port",
+                    f"{country} · {name}",
+                )
+                await self.create_port(country, name=name, proxy_type_id=proxy_type_id)
+                port = await self._await_new_port(country, pick_type)
 
             upstream = self._to_upstream(port, rotate=fresh)
             if not fresh:
@@ -274,12 +348,17 @@ class AsocksClient:
         return None
 
     async def _await_new_port(
-        self, country: str, attempts: int = 10, delay: float = 2.0
+        self,
+        country: str,
+        type_id: Optional[int] = None,
+        attempts: int = 10,
+        delay: float = 2.0,
     ) -> dict:
-        """Poll until a port for `country` shows up after a create."""
+        """Poll until a port for `country` (and proxy type, when set) shows up
+        after a create."""
         for _ in range(attempts):
             await asyncio.sleep(delay)
-            port = self._pick(await self.list_ports(), country)
+            port = self._pick(await self.list_ports(), country, type_id)
             if port is not None:
                 return port
         raise AsocksError(f"asocks port for {country} not ready after create")

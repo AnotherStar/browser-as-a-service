@@ -274,6 +274,14 @@ class SessionCreateRequest(BaseModel):
         "server default.",
         examples=["RU"],
     )
+    proxy_type: Optional[str] = Field(
+        None,
+        description="Asocks proxy type for the exit IP: 'residential', 'mixed', "
+        "'mobile' (4G), or 'corporate'. Omit to use the server default ('mixed'). "
+        "Use 'mobile' for sites that captcha datacenter/residential IPs (e.g. "
+        "Yandex.Market). An unknown value is a 400.",
+        examples=["mobile"],
+    )
     warmup: bool = Field(
         True,
         description="Visit the warmup URL once after launch to prime anti-bot "

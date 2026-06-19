@@ -353,16 +353,23 @@ class BrowserManager:
     # -- warm sessions ----------------------------------------------------- #
 
     async def create_session(
-        self, label: Optional[str], country: Optional[str], warmup: bool
+        self,
+        label: Optional[str],
+        country: Optional[str],
+        warmup: bool,
+        proxy_type_id: Optional[int] = None,
     ) -> _Session:
         """Launch a proxied browser, warm it, and keep it alive for reuse.
         Each session gets a fresh Asocks exit IP (fresh=True) so a pool spreads
-        load across IPs. Falls back to a direct (no-proxy) browser when Asocks
-        isn't configured (local dev)."""
+        load across IPs. `proxy_type_id` pins the Asocks proxy type (e.g. mobile
+        for Yandex.Market); None uses the server default. Falls back to a direct
+        (no-proxy) browser when Asocks isn't configured (local dev)."""
         proxy: Optional[Proxy] = None
         if asocks_client.configured:
             proxy = await asocks_client.acquire(
-                country or settings.default_proxy_country, fresh=True
+                country or settings.default_proxy_country,
+                fresh=True,
+                proxy_type_id=proxy_type_id,
             )
         server = proxy.server if proxy else None
         bus.emit(
