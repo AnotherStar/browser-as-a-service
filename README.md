@@ -234,7 +234,7 @@ mobile + residential, все Moscow.
 | `ASOCKS_POOL_TTL_S` | `300` | сколько переиспользовать выданный порт |
 | `ASOCKS_BASE_URL` | `https://api.asocks.com/v2` | база API Asocks |
 | `ASOCKS_TIMEOUT_S` | `30` | таймаут HTTP-вызова к API Asocks |
-| `ASOCKS_TYPE_ID` / `ASOCKS_PROXY_TYPE_ID` / `ASOCKS_SERVER_PORT_TYPE_ID` | `1` / `2` / `1` | поля `create-port` (по умолчанию — SOCKS5-порт с авторизацией) |
+| `ASOCKS_TYPE_ID` / `ASOCKS_PROXY_TYPE_ID` / `ASOCKS_SERVER_PORT_TYPE_ID` | `1` / `2` / `1` | поля `create-port`. **`proxy_type_id` по иконкам в дашборде** (не по словам поддержки!): `1`=резидент, `2`=mixed (mobile+resid+corp), `3`=mobile (4G), `4`=corporate. По умолчанию `2` (mixed) |
 
 ## Деплой (сервер)
 
