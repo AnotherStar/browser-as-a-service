@@ -230,6 +230,9 @@ class StepResult(BaseModel):
     action: str
     ok: bool
     error: Optional[str] = None
+    duration_ms: int = Field(
+        0, description="Wall-clock time spent on this step, in milliseconds."
+    )
 
 
 class RunResponse(BaseModel):
@@ -240,6 +243,13 @@ class RunResponse(BaseModel):
         default_factory=dict, description="Extracted values keyed by step `name`."
     )
     steps: list[StepResult] = Field(default_factory=list)
+    timings: dict[str, int] = Field(
+        default_factory=dict,
+        description="Phase breakdown of elapsed_ms, in milliseconds: "
+        "`proxy_ms` (resolving an Asocks proxy), `acquire_ms` (throttle wait + "
+        "browser/tab setup before the first step), `steps_ms` (running the "
+        "scenario). The remainder up to elapsed_ms is final-URL read + overhead.",
+    )
     error: Optional[str] = None
 
 

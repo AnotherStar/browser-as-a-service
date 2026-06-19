@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from .models import (
@@ -65,6 +66,7 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
 
     for i, step in enumerate(steps):
         action = getattr(step, "action", "?")
+        step_started = time.monotonic()
         try:
             if isinstance(step, NavigateStep):
                 if step.new_tab and browser is not None:
@@ -125,12 +127,25 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
             else:  # pragma: no cover - guarded by the typed union
                 raise ValueError(f"unknown step type: {type(step)!r}")
 
-            results.append(StepResult(index=i, action=action, ok=True))
+            results.append(
+                StepResult(
+                    index=i,
+                    action=action,
+                    ok=True,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - report, don't abort
             results.append(
-                StepResult(index=i, action=action, ok=False, error=str(exc))
+                StepResult(
+                    index=i,
+                    action=action,
+                    ok=False,
+                    error=str(exc),
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
             )
 
     return data, results

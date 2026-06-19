@@ -140,14 +140,22 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
     )
 
     started = time.monotonic()
+    timings: dict[str, int] = {}
     try:
+        t_proxy = time.monotonic()
         proxy = await _resolve_proxy(req, who, fresh=req.rotate_proxy)
+        timings["proxy_ms"] = int((time.monotonic() - t_proxy) * 1000)
+        t_acquire = time.monotonic()
         async with manager.acquire(proxy, req.headless) as (browser, tab):
+            # Time to enter the context = throttle wait + browser/tab/stealth setup.
+            timings["acquire_ms"] = int((time.monotonic() - t_acquire) * 1000)
             await apply_cookies(browser, req.cookies, first_url)
+            t_steps = time.monotonic()
             data, step_results = await asyncio.wait_for(
                 run_steps(tab, steps, browser=browser),
                 timeout=settings.run_timeout_s,
             )
+            timings["steps_ms"] = int((time.monotonic() - t_steps) * 1000)
             final_url = None
             try:
                 final_url = await tab.evaluate("location.href", return_by_value=True)
@@ -172,10 +180,14 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
 
     ok = all(s.ok for s in step_results)
     elapsed = int((time.monotonic() - started) * 1000)
+    phases = " · ".join(f"{k}={v}ms" for k, v in timings.items())
+    steps_detail = " · ".join(
+        f"{s.action}={s.duration_ms}ms" for s in step_results
+    )
     bus.emit(
         "success" if ok else "warn", "scrape", who,
         "run done" if ok else "run partial",
-        f"{final_url or '?'} · {elapsed}ms",
+        f"{final_url or '?'} · {elapsed}ms · {phases} · {steps_detail}",
     )
     return RunResponse(
         ok=ok,
@@ -183,4 +195,5 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
         elapsed_ms=elapsed,
         data=data,
         steps=step_results,
+        timings=timings,
     )
