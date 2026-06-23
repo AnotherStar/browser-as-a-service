@@ -104,25 +104,19 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
 
             elif isinstance(step, WaitForAnyStep):
                 # Poll for whichever selector appears first; stop as soon as one
-                # is present instead of blocking for the full timeout. Bound by a
-                # WALL-CLOCK deadline (not an iteration count): on an unresponsive
-                # page each poll's evaluate can hang up to its own timeout, so a
-                # fixed iteration count would overrun massively (48 polls × 12s).
-                # Use a short per-poll timeout and stop at the real deadline.
+                # is present instead of blocking for the full timeout. A single
+                # poll that hangs (page mid-reload) is bounded by _evaluate and
+                # treated as "not present yet", so the loop keeps its own timeout.
                 checks = " || ".join(
                     f"!!document.querySelector({json.dumps(sel)})"
                     for sel in step.selectors
                 )
-                deadline = time.monotonic() + step.timeout_s
-                while time.monotonic() < deadline:
+                for _ in range(max(1, int(step.timeout_s / 0.25))):
                     try:
-                        if await asyncio.wait_for(
-                            tab.evaluate(f"({checks})", return_by_value=True),
-                            timeout=min(2.0, settings.op_timeout_s),
-                        ):
+                        if await _evaluate(tab, f"({checks})"):
                             break
                     except asyncio.TimeoutError:
-                        pass  # page busy/mid-reload — keep polling until deadline
+                        pass
                     await tab.sleep(0.25)
 
             elif isinstance(step, WaitForTextStep):
@@ -136,17 +130,11 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
                 await el.click()
 
             elif isinstance(step, ScrollStep):
-                # Bound each scroll: on a wedged page scroll_down can hang, and an
-                # unbounded loop would burn the run budget after the waits already
-                # decided there's nothing here.
                 for _ in range(step.times):
-                    try:
-                        if step.direction == "down":
-                            await asyncio.wait_for(tab.scroll_down(step.amount), timeout=settings.op_timeout_s)
-                        else:
-                            await asyncio.wait_for(tab.scroll_up(step.amount), timeout=settings.op_timeout_s)
-                    except asyncio.TimeoutError:
-                        break
+                    if step.direction == "down":
+                        await tab.scroll_down(step.amount)
+                    else:
+                        await tab.scroll_up(step.amount)
                     await tab.sleep(0.4)
 
             elif isinstance(step, ExtractStep):
