@@ -20,6 +20,17 @@ from .models import (
     WaitForStep,
     WaitForTextStep,
 )
+from .settings import settings
+
+
+async def _evaluate(tab, expr: str):
+    """tab.evaluate bounded by a per-operation timeout. On bot-protected pages a
+    single CDP evaluate can hang forever (execution context destroyed mid-reload);
+    without this cap it would burn the whole run timeout. Raises TimeoutError so
+    the caller fails this step fast instead of wedging the run."""
+    return await asyncio.wait_for(
+        tab.evaluate(expr, return_by_value=True), timeout=settings.op_timeout_s
+    )
 
 
 async def _eval_json(tab, js_expr: str) -> Any:
@@ -28,7 +39,7 @@ async def _eval_json(tab, js_expr: str) -> Any:
     We stringify in the page and parse here, which sidesteps CDP's
     deep-serialization quirks for arrays/objects."""
     wrapped = f"JSON.stringify((function(){{ return ({js_expr}); }})())"
-    raw = await tab.evaluate(wrapped, return_by_value=True)
+    raw = await _evaluate(tab, wrapped)
     if raw is None:
         return None
     try:
@@ -69,10 +80,22 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
         step_started = time.monotonic()
         try:
             if isinstance(step, NavigateStep):
-                if step.new_tab and browser is not None:
-                    tab = await browser.get(step.url, new_tab=True)
-                else:
-                    await tab.get(step.url)
+                # Bound the navigation: tab.get waits for `load`, which the anti-bot
+                # reload loop and the infinite-scroll SERP never fire. On timeout we
+                # stop waiting and continue — the following wait_for/wait_for_any
+                # decides on whatever rendered, instead of hanging to the ceiling.
+                try:
+                    if step.new_tab and browser is not None:
+                        tab = await asyncio.wait_for(
+                            browser.get(step.url, new_tab=True),
+                            timeout=settings.nav_timeout_s,
+                        )
+                    else:
+                        await asyncio.wait_for(
+                            tab.get(step.url), timeout=settings.nav_timeout_s
+                        )
+                except asyncio.TimeoutError:
+                    pass
                 if step.settle_seconds:
                     await tab.sleep(step.settle_seconds)
 
@@ -81,14 +104,19 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
 
             elif isinstance(step, WaitForAnyStep):
                 # Poll for whichever selector appears first; stop as soon as one
-                # is present instead of blocking for the full timeout.
+                # is present instead of blocking for the full timeout. A single
+                # poll that hangs (page mid-reload) is bounded by _evaluate and
+                # treated as "not present yet", so the loop keeps its own timeout.
                 checks = " || ".join(
                     f"!!document.querySelector({json.dumps(sel)})"
                     for sel in step.selectors
                 )
                 for _ in range(max(1, int(step.timeout_s / 0.25))):
-                    if await tab.evaluate(f"({checks})", return_by_value=True):
-                        break
+                    try:
+                        if await _evaluate(tab, f"({checks})"):
+                            break
+                    except asyncio.TimeoutError:
+                        pass
                     await tab.sleep(0.25)
 
             elif isinstance(step, WaitForTextStep):
@@ -122,7 +150,10 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
                     data[step.name] = value
 
             elif isinstance(step, ScreenshotStep):
-                data[step.name] = await tab.screenshot_b64(full_page=step.full_page)
+                data[step.name] = await asyncio.wait_for(
+                    tab.screenshot_b64(full_page=step.full_page),
+                    timeout=settings.op_timeout_s,
+                )
 
             else:  # pragma: no cover - guarded by the typed union
                 raise ValueError(f"unknown step type: {type(step)!r}")

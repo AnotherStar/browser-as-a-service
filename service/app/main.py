@@ -172,7 +172,10 @@ async def run(req: RunRequest, request: Request) -> RunResponse:
             timings["steps_ms"] = int((time.monotonic() - t_steps) * 1000)
             final_url = None
             try:
-                final_url = await tab.evaluate("location.href", return_by_value=True)
+                final_url = await asyncio.wait_for(
+                    tab.evaluate("location.href", return_by_value=True),
+                    timeout=settings.op_timeout_s,
+                )
             except Exception:
                 pass
             return data, step_results, final_url
