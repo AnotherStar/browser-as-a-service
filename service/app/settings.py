@@ -63,20 +63,8 @@ class Settings:
     # session cookies before any "cold" product hit. Empty disables it.
     warmup_url: str = os.environ.get("WARMUP_URL", "https://www.ozon.ru/")
     warmup_settle_s: float = float(os.environ.get("WARMUP_SETTLE_S", "4.0"))
-    # Per-run hard timeout — wraps only the scenario steps. A safety ceiling now
-    # that each page-operation is individually bounded (op/nav timeouts below).
+    # Per-run hard timeout — wraps only the scenario steps.
     run_timeout_s: float = float(os.environ.get("RUN_TIMEOUT_S", "90"))
-    # Per-operation cap on a single page op (evaluate/extract/screenshot/click).
-    # Marketplace pages (anti-bot reload loops, infinite-scroll feeds) can wedge a
-    # single CDP call indefinitely; without this cap one stuck op burns the whole
-    # run_timeout. Keep short — if a marketplace op hasn't answered in ~12s it
-    # won't, so fail the step fast and let the caller retry on a fresh session.
-    op_timeout_s: float = float(os.environ.get("OP_TIMEOUT_S", "12"))
-    # Per-navigation cap (tab.get waits for `load`). The anti-bot challenge keeps
-    # reloading and the SERP feed never fires `load`, so tab.get hangs to the
-    # ceiling. Bound it: on timeout we stop waiting for `load` and let the
-    # following wait_for/wait_for_any decide on whatever rendered.
-    nav_timeout_s: float = float(os.environ.get("NAV_TIMEOUT_S", "15"))
     # Hard timeout for the WHOLE request: proxy resolve + browser/session acquire
     # + proxy-auth + steps. The steps timeout above does NOT cover acquire, so a
     # run that hangs while launching/warming a browser or authing a slow proxy
