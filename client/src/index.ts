@@ -16,6 +16,8 @@ export type Proxy = z.infer<typeof schemas.Proxy>;
 export type Step = z.infer<
   | typeof schemas.NavigateStep
   | typeof schemas.WaitForStep
+  | typeof schemas.WaitForAnyStep
+  | typeof schemas.WaitForEvalStep
   | typeof schemas.WaitForTextStep
   | typeof schemas.SleepStep
   | typeof schemas.ClickStep
@@ -28,6 +30,9 @@ export type Step = z.infer<
 export type RunRequest = z.infer<typeof schemas.RunRequest>;
 export type RunResponse = z.infer<typeof schemas.RunResponse>;
 export type HealthResponse = z.infer<typeof schemas.HealthResponse>;
+export type SessionCreateRequest = z.infer<typeof schemas.SessionCreateRequest>;
+export type SessionInfo = z.infer<typeof schemas.SessionInfo>;
+export type SessionListResponse = z.infer<typeof schemas.SessionListResponse>;
 
 /**
  * Create a typesafe client.
@@ -42,8 +47,9 @@ export type HealthResponse = z.infer<typeof schemas.HealthResponse>;
  *   username: "baas",
  *   password: process.env.BAAS_PASSWORD!,
  * });
+ * const session = await client.createSession({ label: "OZON", proxy_country: "RU" });
  * const { data } = await client.run({
- *   start_url: url, use_proxy: true, proxy_country: "RU",
+ *   start_url: url, session_id: session.id,
  *   steps: [{ action: "extract", name: "price", selector: "[data-widget=webPrice]" }],
  * });
  */
@@ -83,6 +89,15 @@ export function createScrapeClient(
     /** Run an arbitrary command scenario and return extracted data. */
     run(body: RunRequest): Promise<RunResponse> {
       return api.run_run_post(body);
+    },
+    createSession(body: SessionCreateRequest = {}): Promise<SessionInfo> {
+      return api.create_session_sessions_post(body);
+    },
+    listSessions(): Promise<SessionListResponse> {
+      return api.list_sessions_sessions_get();
+    },
+    async closeSession(sessionId: string): Promise<void> {
+      await api.delete_session_sessions__session_id__delete(undefined, { params: { session_id: sessionId } });
     },
   };
 }

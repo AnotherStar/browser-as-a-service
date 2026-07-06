@@ -40,7 +40,6 @@ cd service
 curl localhost:8077/health
 curl -X POST localhost:8077/run -H 'content-type: application/json' -d '{
   "start_url":"https://www.ozon.ru/product/....",
-  "use_proxy":true, "proxy_country":"RU",
   "steps":[{"action":"extract","name":"price","selector":"[data-widget=webPrice]"}]
 }'
 ```
@@ -84,12 +83,11 @@ const remote = createScrapeClient("https://baas.mse.plus", {
 });
 
 // универсальный сценарий из «команд» — полностью типизирован.
-// use_proxy + proxy_country — пробить через резидентный прокси;
-// rotate_proxy: true на ретрае — взять свежий exit-IP.
+// Прогретая сессия держит проксированный Chrome живым между карточками.
+const session = await remote.createSession({ label: "OZON", proxy_country: "RU" });
 const { data } = await remote.run({
   start_url: url,
-  use_proxy: true,
-  proxy_country: "RU",
+  session_id: session.id,
   steps: [
     { action: "wait_for", selector: "[data-widget=webPrice]" },
     { action: "extract", name: "price", selector: "[data-widget=webPrice]", kind: "text" },
@@ -112,7 +110,7 @@ cd ../client && npm run generate                       # -> src/generated.ts (zo
 
 ## Команды (actions) движка `/run`
 
-`navigate`, `wait_for`, `wait_for_text`, `sleep`, `click`, `scroll`,
+`navigate`, `wait_for`, `wait_for_any`, `wait_for_eval`, `wait_for_text`, `sleep`, `click`, `scroll`,
 `extract` (text/html/attr, в т.ч. `many`), `find_text`, `eval` (любой JS),
 `screenshot`. Каждая — отдельная типизированная модель, объединённая в
 discriminated union по полю `action`. Добавить новую команду = добавить модель
@@ -155,14 +153,13 @@ discriminated union по полю `action`. Добавить новую кома
 
 ### Asocks (резидентные прокси по требованию)
 
-Вместо ручного `proxy` можно попросить сервис сам взять резидентный прокси у
-[Asocks](https://asocks.com) (`https://api.asocks.com/v2`). Включается **по
-запросу** — решает тот, кто его делает:
+Вместо ручного `proxy` сервис может сам взять резидентный прокси у
+[Asocks](https://asocks.com) (`https://api.asocks.com/v2`). Для массового снятия
+обычно создают прогретую сессию:
 
 ```jsonc
-{ "url": "https://www.ozon.ru/product/...",
-  "use_proxy": true,
-  "proxy_country": "RU" }   // ISO-код страны; без него берётся любой доступный порт
+{ "label": "OZON",
+  "proxy_country": "RU" }   // POST /sessions; ISO-код страны, пусто — серверный дефолт
 ```
 
 Как это работает:
@@ -176,15 +173,14 @@ discriminated union по полю `action`. Добавить новую кома
   HTTP-прокси нативно — CDP отвечает на запрос `407` (`Fetch.continueWithAuth`),
   поэтому отдельный мост не нужен. SOCKS5 не используем: Chrome не умеет его
   авторизацию, а по HTTP Ozon к тому же реже даёт жёсткий бан;
-- явный `proxy` в запросе имеет приоритет над `use_proxy`.
+- явный `proxy` в `/run` имеет приоритет для разового запуска без `session_id`.
 
 **Ротация при бане по IP.** Ozon отбраковывает IP по репутации: часть прокси он
 жёстко блокирует («Похоже, нет соединения / Выключите VPN»), часть пускает, но
 показывает капчу. baas сам не решает, что считать блоком (это знание о
-конкретном маркетплейсе) — но даёт примитив: на повторном `/run` передай
-**`rotate_proxy: true`**, и запрос пойдёт через **свежий exit-IP** (иначе
-попадёшь в тот же закэшированный). Логику «увидел блок → повтори с
-`rotate_proxy`» строит вызывающий код. Чистого результата добиваются прокси,
+конкретном маркетплейсе) — но даёт примитив: закрой заблокированную сессию и
+создай новую через `POST /sessions`, она получит **свежий exit-IP**. Логику
+«увидел блок → пересоздай сессию» строит вызывающий код. Чистого результата добиваются прокси,
 которым Ozon доверяет (резидентные/мобильные с хорошей репутацией) — ротация
 лишь перебирает выданный пул.
 
@@ -235,12 +231,14 @@ exit-IP: Yandex.Market метит капчей все IP, кроме реаль�
 | Переменная | По умолчанию | Назначение |
 |-----------|--------------|-----------|
 | `CHROME_PATH` | автоопределение | путь к Chrome (избегает битого homebrew chromium) |
-| `MAX_CONCURRENCY` | `1` | одновременных операций браузера |
+| `MAX_CONCURRENCY` | `3` | одновременных операций браузера |
 | `MIN_INTERVAL_S` / `JITTER_S` | `2.0` / `1.5` | пауза между заходами (анти-бан) |
 | `WARMUP_URL` | `https://www.ozon.ru/` | прогрев сессии при старте браузера |
+| `WARMUP_SETTLE_S` | `4.0` | пауза после прогрева |
 | `HEADLESS` | `0` | `1` включит headless (Ozon заблокирует) |
 | `RUN_TIMEOUT_S` | `90` | жёсткий таймаут одного запуска |
-| `ASOCKS_API_KEY` | — | ключ Asocks; включает `use_proxy` в запросах |
+| `REQUEST_TIMEOUT_S` | `150` | жёсткий таймаут всего запроса: прокси + запуск/сессия + шаги |
+| `ASOCKS_API_KEY` | — | ключ Asocks; включает автоматический подбор прокси |
 | `ASOCKS_POOL_TTL_S` | `300` | сколько переиспользовать выданный порт |
 | `ASOCKS_BASE_URL` | `https://api.asocks.com/v2` | база API Asocks |
 | `ASOCKS_TIMEOUT_S` | `30` | таймаут HTTP-вызова к API Asocks |

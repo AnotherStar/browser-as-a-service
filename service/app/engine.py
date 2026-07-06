@@ -17,6 +17,7 @@ from .models import (
     SleepStep,
     StepResult,
     WaitForAnyStep,
+    WaitForEvalStep,
     WaitForStep,
     WaitForTextStep,
 )
@@ -86,10 +87,32 @@ async def run_steps(tab, steps, browser=None) -> tuple[dict[str, Any], list[Step
                     f"!!document.querySelector({json.dumps(sel)})"
                     for sel in step.selectors
                 )
+                found = False
                 for _ in range(max(1, int(step.timeout_s / 0.25))):
                     if await tab.evaluate(f"({checks})", return_by_value=True):
+                        found = True
                         break
                     await tab.sleep(0.25)
+                if not found:
+                    raise TimeoutError(
+                        f"no selector appeared within {step.timeout_s}s"
+                    )
+
+            elif isinstance(step, WaitForEvalStep):
+                found = False
+                interval = max(0.05, step.interval_s)
+                checks = max(1, int(step.timeout_s / interval))
+                for _ in range(checks):
+                    if await tab.evaluate(
+                        f"Boolean(({step.expression}))", return_by_value=True
+                    ):
+                        found = True
+                        break
+                    await tab.sleep(interval)
+                if not found:
+                    raise TimeoutError(
+                        f"expression stayed falsy within {step.timeout_s}s"
+                    )
 
             elif isinstance(step, WaitForTextStep):
                 await tab.find(step.text, timeout=step.timeout_s)

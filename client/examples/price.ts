@@ -15,14 +15,19 @@ async function main() {
   const health = await client.health();
   console.log("health:", health);
 
-  // Generic command scenario — fully typed. Route through a residential
-  // proxy; site-specific selectors/parsing are the caller's concern.
+  // Generic command scenario — fully typed. A warm session keeps a proxied,
+  // anti-bot-warmed Chrome alive for reuse; site-specific parsing stays here.
+  const session = await client.createSession({ label: "OZON", proxy_country: "RU" });
   const run = await client.run({
     start_url: url,
-    use_proxy: true,
-    proxy_country: "RU",
+    session_id: session.id,
     steps: [
-      { action: "wait_for", selector: "[data-widget=webPrice]", timeout_s: 15 },
+      {
+        action: "wait_for_eval",
+        expression:
+          "!!document.querySelector('[data-widget=webPrice]') || !!document.querySelector('[data-widget=webOutOfStock]')",
+        timeout_s: 15,
+      },
       { action: "extract", name: "title", selector: "h1", kind: "text" },
       {
         action: "extract",

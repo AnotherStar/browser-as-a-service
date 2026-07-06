@@ -284,15 +284,24 @@ class BrowserManager:
             await self._install_proxy_auth(tab, proxy)
         return tab
 
-    async def _warm_browser(self, browser: uc.Browser, proxy: Optional[Proxy]) -> None:
+    async def _warm_browser(
+        self,
+        browser: uc.Browser,
+        proxy: Optional[Proxy],
+        warmup_url: Optional[str] = None,
+        settle_s: Optional[float] = None,
+    ) -> None:
         """Visit the warmup URL once (through the proxy, with stealth) so the
         browser holds valid anti-bot cookies before any cold product hit."""
-        if not settings.warmup_url:
+        url = warmup_url if warmup_url is not None else settings.warmup_url
+        if not url:
             return
         with contextlib.suppress(Exception):
             tab = await self._prepare_tab(browser, proxy, new_tab=False)
-            await tab.get(settings.warmup_url)
-            await tab.sleep(settings.warmup_settle_s)
+            await tab.get(url)
+            await tab.sleep(
+                settings.warmup_settle_s if settle_s is None else settle_s
+            )
 
     # -- throttle ---------------------------------------------------------- #
 
@@ -358,6 +367,8 @@ class BrowserManager:
         country: Optional[str],
         warmup: bool,
         proxy_type_id: Optional[int] = None,
+        warmup_url: Optional[str] = None,
+        warmup_settle_s: Optional[float] = None,
     ) -> _Session:
         """Launch a proxied browser, warm it, and keep it alive for reuse.
         Each session gets a fresh Asocks exit IP (fresh=True) so a pool spreads
@@ -381,7 +392,7 @@ class BrowserManager:
             proxy_server=_normalize_proxy_server(proxy.server) if proxy else None,
         )
         if warmup:
-            await self._warm_browser(browser, proxy)
+            await self._warm_browser(browser, proxy, warmup_url, warmup_settle_s)
         now_m = time.monotonic()
         sid = uuid.uuid4().hex[:12]
         session = _Session(

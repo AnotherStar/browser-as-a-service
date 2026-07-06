@@ -83,6 +83,23 @@ class WaitForAnyStep(BaseModel):
     timeout_s: float = Field(15.0, gt=0, le=120)
 
 
+class WaitForEvalStep(BaseModel):
+    """Poll a JavaScript expression until it returns a truthy value.
+
+    This is useful for SPA pages where the container appears before the actual
+    price/status text is hydrated: callers can wait for the domain signal
+    itself instead of adding a fixed sleep.
+    """
+
+    action: Literal["wait_for_eval"] = "wait_for_eval"
+    expression: str = Field(
+        ...,
+        description="JS expression evaluated repeatedly until it returns truthy.",
+    )
+    timeout_s: float = Field(15.0, gt=0, le=120)
+    interval_s: float = Field(0.25, gt=0, le=5)
+
+
 class SleepStep(BaseModel):
     action: Literal["sleep"] = "sleep"
     seconds: float = Field(..., gt=0, le=60)
@@ -150,6 +167,7 @@ Step = Annotated[
         NavigateStep,
         WaitForStep,
         WaitForAnyStep,
+        WaitForEvalStep,
         WaitForTextStep,
         SleepStep,
         ClickStep,
@@ -286,6 +304,18 @@ class SessionCreateRequest(BaseModel):
         True,
         description="Visit the warmup URL once after launch to prime anti-bot "
         "cookies before the first real navigation.",
+    )
+    warmup_url: Optional[str] = Field(
+        None,
+        description="Optional session-specific warmup URL. Omit to use the "
+        "server WARMUP_URL default. Useful when a caller keeps separate warm "
+        "sessions per marketplace.",
+    )
+    warmup_settle_s: Optional[float] = Field(
+        None,
+        ge=0,
+        le=60,
+        description="Optional settle delay after the session-specific warmup URL.",
     )
 
 

@@ -68,6 +68,113 @@
           }
         }
       }
+    },
+    "/sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "List Sessions",
+        "description": "List live warm sessions with age/idle/run counters.",
+        "operationId": "list_sessions_sessions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Create Session",
+        "description": "Launch a warm, proxied browser and keep it alive for reuse via\n`POST /run` with its `session_id`. Hold several (e.g. a small pool per\nmarketplace) to scrape batches in parallel without re-warming each card.",
+        "operationId": "create_session_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{session_id}": {
+      "delete": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Delete Session",
+        "description": "Tear down a warm session (stops its browser, frees the exit IP).",
+        "operationId": "delete_session_sessions__session_id__delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Session Sessions  Session Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -398,6 +505,9 @@
                   "$ref": "#/components/schemas/WaitForAnyStep"
                 },
                 {
+                  "$ref": "#/components/schemas/WaitForEvalStep"
+                },
+                {
                   "$ref": "#/components/schemas/WaitForTextStep"
                 },
                 {
@@ -435,6 +545,7 @@
                   "sleep": "#/components/schemas/SleepStep",
                   "wait_for": "#/components/schemas/WaitForStep",
                   "wait_for_any": "#/components/schemas/WaitForAnyStep",
+                  "wait_for_eval": "#/components/schemas/WaitForEvalStep",
                   "wait_for_text": "#/components/schemas/WaitForTextStep"
                 }
               }
@@ -456,6 +567,18 @@
             "title": "Start Url",
             "description": "Convenience: navigate here before running steps (equivalent to a leading navigate step)."
           },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Reuse a warm session created via POST /sessions (its already-launched, proxied, anti-bot-warmed browser). Skips the per-run browser launch + warmup + teardown — the big latency win for batches. Unknown/expired id -> HTTP 404 (caller should re-create and retry). Omit to run one-off (a fresh proxied browser is spun up just for it)."
+          },
           "proxy": {
             "anyOf": [
               {
@@ -465,34 +588,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional proxy for this run."
-          },
-          "use_proxy": {
-            "type": "boolean",
-            "title": "Use Proxy",
-            "description": "Route this run through an Asocks residential proxy (https://asocks.com). Ignored when an explicit `proxy` is given. Requires ASOCKS_API_KEY on the server.",
-            "default": false
-          },
-          "proxy_country": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Proxy Country",
-            "description": "ISO country code for the Asocks proxy, e.g. 'RU'. Omit to use any available port. Only used when `use_proxy` is true.",
-            "examples": [
-              "RU"
-            ]
-          },
-          "rotate_proxy": {
-            "type": "boolean",
-            "title": "Rotate Proxy",
-            "description": "Bypass the proxy cache and rotate to a fresh Asocks exit IP. Set true when retrying past an antibot wall so the retry uses a new IP. Only used when `use_proxy` is true.",
-            "default": false
+            "description": "Explicit proxy for a one-off run (ignored when session_id is set). Omit to auto-resolve an Asocks residential proxy."
           },
           "cookies": {
             "anyOf": [
@@ -578,6 +674,14 @@
             "type": "array",
             "title": "Steps"
           },
+          "timings": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Timings",
+            "description": "Phase breakdown of elapsed_ms, in milliseconds: `proxy_ms` (resolving an Asocks proxy), `acquire_ms` (throttle wait + browser/tab setup before the first step), `steps_ms` (running the scenario). The remainder up to elapsed_ms is final-URL read + overhead."
+          },
           "error": {
             "anyOf": [
               {
@@ -658,6 +762,169 @@
         "type": "object",
         "title": "ScrollStep"
       },
+      "SessionCreateRequest": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Free-form tag for the caller's bookkeeping, e.g. the marketplace ('OZON'/'WB'/'YM'). Echoed back in session info; does not affect behaviour.",
+            "examples": [
+              "OZON"
+            ]
+          },
+          "proxy_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Country",
+            "description": "ISO country code for the Asocks exit IP. Omit to use the server default.",
+            "examples": [
+              "RU"
+            ]
+          },
+          "proxy_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Type",
+            "description": "Asocks proxy type for the exit IP: 'residential', 'mixed', 'mobile' (4G), or 'corporate'. Omit to use the server default ('mixed'). Use 'mobile' for sites that captcha datacenter/residential IPs (e.g. Yandex.Market). An unknown value is a 400.",
+            "examples": [
+              "mobile"
+            ]
+          },
+          "warmup": {
+            "type": "boolean",
+            "title": "Warmup",
+            "description": "Visit the warmup URL once after launch to prime anti-bot cookies before the first real navigation.",
+            "default": true
+          },
+          "warmup_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warmup Url",
+            "description": "Optional session-specific warmup URL. Omit to use the server WARMUP_URL default. Useful when a caller keeps separate warm sessions per marketplace."
+          },
+          "warmup_settle_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 60.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warmup Settle S",
+            "description": "Optional settle delay after the session-specific warmup URL."
+          }
+        },
+        "type": "object",
+        "title": "SessionCreateRequest",
+        "description": "Create a warm, proxied browser kept alive for reuse across runs."
+      },
+      "SessionInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "exit_server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Server",
+            "description": "The proxy gateway host:port backing this session."
+          },
+          "created_ts": {
+            "type": "number",
+            "title": "Created Ts",
+            "description": "Unix epoch seconds at creation."
+          },
+          "last_used_ts": {
+            "type": "number",
+            "title": "Last Used Ts",
+            "description": "Unix epoch seconds of last run."
+          },
+          "age_s": {
+            "type": "integer",
+            "title": "Age S",
+            "description": "Seconds since creation."
+          },
+          "idle_s": {
+            "type": "integer",
+            "title": "Idle S",
+            "description": "Seconds since the last run."
+          },
+          "runs": {
+            "type": "integer",
+            "title": "Runs",
+            "description": "Runs served by this session so far."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_ts",
+          "last_used_ts",
+          "age_s",
+          "idle_s",
+          "runs"
+        ],
+        "title": "SessionInfo"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionInfo"
+            },
+            "type": "array",
+            "title": "Sessions"
+          }
+        },
+        "type": "object",
+        "title": "SessionListResponse"
+      },
       "SleepStep": {
         "properties": {
           "action": {
@@ -703,6 +970,12 @@
               }
             ],
             "title": "Error"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Wall-clock time spent on this step, in milliseconds.",
+            "default": 0
           }
         },
         "type": "object",
@@ -784,6 +1057,41 @@
         ],
         "title": "WaitForAnyStep",
         "description": "Wait until ANY of the given selectors is present (whichever appears\nfirst), then continue. Avoids waiting the full timeout when e.g. an\nout-of-stock block shows up long before a (never-coming) price widget."
+      },
+      "WaitForEvalStep": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "wait_for_eval",
+            "title": "Action",
+            "default": "wait_for_eval"
+          },
+          "expression": {
+            "type": "string",
+            "title": "Expression",
+            "description": "JS expression evaluated repeatedly until it returns truthy."
+          },
+          "timeout_s": {
+            "type": "number",
+            "maximum": 120.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "default": 15.0
+          },
+          "interval_s": {
+            "type": "number",
+            "maximum": 5.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Interval S",
+            "default": 0.25
+          }
+        },
+        "type": "object",
+        "required": [
+          "expression"
+        ],
+        "title": "WaitForEvalStep",
+        "description": "Poll a JavaScript expression until it returns a truthy value.\n\nThis is useful for SPA pages where the container appears before the actual\nprice/status text is hydrated: callers can wait for the domain signal\nitself instead of adding a fixed sleep."
       },
       "WaitForStep": {
         "properties": {

@@ -247,7 +247,12 @@ async def create_session(req: SessionCreateRequest, request: Request) -> Session
         raise HTTPException(400, str(exc))
     try:
         session = await manager.create_session(
-            req.label, req.proxy_country, req.warmup, proxy_type_id
+            req.label,
+            req.proxy_country,
+            req.warmup,
+            proxy_type_id,
+            req.warmup_url,
+            req.warmup_settle_s,
         )
     except Exception as exc:  # noqa: BLE001
         bus.emit("error", "scrape", who, "session create failed", str(exc))

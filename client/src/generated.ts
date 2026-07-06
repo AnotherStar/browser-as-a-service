@@ -30,6 +30,14 @@ const WaitForAnyStep = z
     timeout_s: z.number().gt(0).lte(120).optional().default(15),
   })
   .passthrough();
+const WaitForEvalStep = z
+  .object({
+    action: z.literal("wait_for_eval").default("wait_for_eval"),
+    expression: z.string(),
+    timeout_s: z.number().gt(0).lte(120).optional().default(15),
+    interval_s: z.number().gt(0).lte(5).optional().default(0.25),
+  })
+  .passthrough();
 const WaitForTextStep = z
   .object({
     action: z.literal("wait_for_text").default("wait_for_text"),
@@ -114,6 +122,7 @@ const RunRequest = z
           NavigateStep,
           WaitForStep,
           WaitForAnyStep,
+          WaitForEvalStep,
           WaitForTextStep,
           SleepStep,
           ClickStep,
@@ -126,10 +135,8 @@ const RunRequest = z
       )
       .min(1),
     start_url: z.union([z.string(), z.null()]).optional(),
+    session_id: z.union([z.string(), z.null()]).optional(),
     proxy: z.union([Proxy, z.null()]).optional(),
-    use_proxy: z.boolean().optional().default(false),
-    proxy_country: z.union([z.string(), z.null()]).optional(),
-    rotate_proxy: z.boolean().optional().default(false),
     cookies: z.union([z.array(Cookie), z.null()]).optional(),
     headless: z.boolean().optional().default(false),
   })
@@ -140,6 +147,7 @@ const StepResult = z
     action: z.string(),
     ok: z.boolean(),
     error: z.union([z.string(), z.null()]).optional(),
+    duration_ms: z.number().int().optional().default(0),
   })
   .passthrough();
 const RunResponse = z
@@ -149,6 +157,7 @@ const RunResponse = z
     elapsed_ms: z.number().int(),
     data: z.object({}).partial().passthrough().optional(),
     steps: z.array(StepResult).optional(),
+    timings: z.record(z.number().int()).optional(),
     error: z.union([z.string(), z.null()]).optional(),
   })
   .passthrough();
@@ -165,12 +174,40 @@ const HTTPValidationError = z
   .object({ detail: z.array(ValidationError) })
   .partial()
   .passthrough();
+const SessionInfo = z
+  .object({
+    id: z.string(),
+    label: z.union([z.string(), z.null()]).optional(),
+    exit_server: z.union([z.string(), z.null()]).optional(),
+    created_ts: z.number(),
+    last_used_ts: z.number(),
+    age_s: z.number().int(),
+    idle_s: z.number().int(),
+    runs: z.number().int(),
+  })
+  .passthrough();
+const SessionListResponse = z
+  .object({ sessions: z.array(SessionInfo) })
+  .partial()
+  .passthrough();
+const SessionCreateRequest = z
+  .object({
+    label: z.union([z.string(), z.null()]),
+    proxy_country: z.union([z.string(), z.null()]),
+    proxy_type: z.union([z.string(), z.null()]),
+    warmup: z.boolean().default(true),
+    warmup_url: z.union([z.string(), z.null()]),
+    warmup_settle_s: z.union([z.number(), z.null()]),
+  })
+  .partial()
+  .passthrough();
 
 export const schemas = {
   HealthResponse,
   NavigateStep,
   WaitForStep,
   WaitForAnyStep,
+  WaitForEvalStep,
   WaitForTextStep,
   SleepStep,
   ClickStep,
@@ -186,6 +223,9 @@ export const schemas = {
   RunResponse,
   ValidationError,
   HTTPValidationError,
+  SessionInfo,
+  SessionListResponse,
+  SessionCreateRequest,
 };
 
 const endpoints = makeApi([
@@ -211,6 +251,60 @@ extracted data. Use &#x60;start_url&#x60; for the initial navigation.`,
       },
     ],
     response: RunResponse,
+    errors: [
+      {
+        status: 422,
+        description: `Validation Error`,
+        schema: HTTPValidationError,
+      },
+    ],
+  },
+  {
+    method: "get",
+    path: "/sessions",
+    alias: "list_sessions_sessions_get",
+    description: `List live warm sessions with age/idle/run counters.`,
+    requestFormat: "json",
+    response: SessionListResponse,
+  },
+  {
+    method: "post",
+    path: "/sessions",
+    alias: "create_session_sessions_post",
+    description: `Launch a warm, proxied browser and keep it alive for reuse via
+&#x60;POST /run&#x60; with its &#x60;session_id&#x60;. Hold several (e.g. a small pool per
+marketplace) to scrape batches in parallel without re-warming each card.`,
+    requestFormat: "json",
+    parameters: [
+      {
+        name: "body",
+        type: "Body",
+        schema: SessionCreateRequest,
+      },
+    ],
+    response: SessionInfo,
+    errors: [
+      {
+        status: 422,
+        description: `Validation Error`,
+        schema: HTTPValidationError,
+      },
+    ],
+  },
+  {
+    method: "delete",
+    path: "/sessions/:session_id",
+    alias: "delete_session_sessions__session_id__delete",
+    description: `Tear down a warm session (stops its browser, frees the exit IP).`,
+    requestFormat: "json",
+    parameters: [
+      {
+        name: "session_id",
+        type: "Path",
+        schema: z.string(),
+      },
+    ],
+    response: z.object({}).partial().passthrough(),
     errors: [
       {
         status: 422,
