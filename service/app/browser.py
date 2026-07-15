@@ -218,6 +218,8 @@ class BrowserManager:
             headless=headless,
             browser_executable_path=settings.chrome_path,
             browser_args=args,
+            browser_connection_timeout=settings.browser_connection_timeout_s,
+            browser_connection_max_tries=settings.browser_connection_max_tries,
         )
 
     @staticmethod
@@ -370,13 +372,13 @@ class BrowserManager:
         warmup_url: Optional[str] = None,
         warmup_settle_s: Optional[float] = None,
     ) -> _Session:
-        """Launch a proxied browser, warm it, and keep it alive for reuse.
-        Each session gets a fresh Asocks exit IP (fresh=True) so a pool spreads
-        load across IPs. `proxy_type_id` pins the Asocks proxy type (e.g. mobile
-        for Yandex.Market); None uses the server default. Falls back to a direct
-        (no-proxy) browser when Asocks isn't configured (local dev)."""
+        """Launch a browser, warm it, and keep it alive for reuse.
+        With Asocks enabled each session gets a fresh exit IP (fresh=True) so a
+        pool spreads load across IPs. `proxy_type_id` pins the Asocks proxy type
+        (e.g. mobile for Yandex.Market); None uses the server default. Falls
+        back to a direct browser when Asocks isn't configured or IGNORE_PROXY=1."""
         proxy: Optional[Proxy] = None
-        if asocks_client.configured:
+        if asocks_client.configured and not settings.ignore_proxy:
             proxy = await asocks_client.acquire(
                 country or settings.default_proxy_country,
                 fresh=True,

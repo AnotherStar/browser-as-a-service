@@ -62,6 +62,9 @@ async def _resolve_one_off_proxy(req, who: str) -> Optional[Proxy]:
     otherwise an auto-resolved Asocks residential IP when Asocks is configured.
     Returns None for a direct connection (local dev without Asocks). May raise
     AsocksError, surfaced to the caller as a failed run."""
+    if settings.ignore_proxy:
+        bus.emit("info", "scrape", who, "proxy ignored", "direct connection")
+        return None
     if req.proxy is not None:
         return req.proxy
     if asocks_client.configured:

@@ -18,6 +18,10 @@ except ImportError:  # pragma: no cover - optional dependency
     pass
 
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _detect_chrome() -> str | None:
     """Find a real Chrome/Chromium. We deliberately avoid the homebrew
     `chromium` symlink, which is often unsigned/broken on macOS."""
@@ -53,6 +57,14 @@ class Settings:
     jitter_s: float = float(os.environ.get("JITTER_S", "1.5"))
     # Default headless mode (Ozon requires headful -> False).
     default_headless: bool = os.environ.get("HEADLESS", "0") == "1"
+    # Chrome on macOS can take several seconds to expose the DevTools endpoint,
+    # especially after updates or with many existing Chrome processes.
+    browser_connection_timeout_s: float = float(
+        os.environ.get("BROWSER_CONNECTION_TIMEOUT_S", "0.5")
+    )
+    browser_connection_max_tries: int = int(
+        os.environ.get("BROWSER_CONNECTION_MAX_TRIES", "30")
+    )
     # Browser language / locale (drives navigator.language(s) + Intl).
     lang: str = os.environ.get("BROWSER_LANG", "ru-RU")
     accept_lang: str = os.environ.get("ACCEPT_LANG", "ru-RU,ru")
@@ -76,6 +88,9 @@ class Settings:
     # -- warm proxy sessions ----------------------------------------------- #
     # Country for auto-resolved Asocks proxies when a request/session omits one.
     default_proxy_country: str = os.environ.get("DEFAULT_PROXY_COUNTRY", "RU")
+    # Local kill switch: force direct connections even if requests pass `proxy`
+    # or ASOCKS_API_KEY is configured. Applies to one-off runs and sessions.
+    ignore_proxy: bool = _env_bool("IGNORE_PROXY")
     # A warm session is evicted after this many seconds with no run (frees the
     # browser + exit IP). The caller re-warms on demand.
     session_idle_ttl_s: float = float(os.environ.get("SESSION_IDLE_TTL_S", "600"))
@@ -88,8 +103,8 @@ class Settings:
     )
 
     # -- Asocks proxy provider (https://api.asocks.com/v2) ------------------ #
-    # API key. When set, callers can opt a request into a residential proxy
-    # with `use_proxy: true` instead of supplying a `proxy` by hand.
+    # API key. When set, one-off runs auto-resolve a residential proxy unless
+    # IGNORE_PROXY=1 is enabled.
     asocks_api_key: str | None = os.environ.get("ASOCKS_API_KEY")
     asocks_base_url: str = os.environ.get(
         "ASOCKS_BASE_URL", "https://api.asocks.com/v2"
